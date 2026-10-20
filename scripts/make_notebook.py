@@ -144,14 +144,39 @@ sys.path.insert(0, WORK)
 print("\\ncwd:", os.getcwd())
 print(sorted(os.listdir(WORK)))
 
-# Fail now, clearly, if the attached code predates modules the notebook needs.
-missing = [m for m in ("preflight", "results", "evaluate", "train", "infer")
-           if not os.path.exists(os.path.join(WORK, "vindr_cxr_vqa", m + ".py"))]
-if missing:
+# Fail now, clearly, if the attached code predates what this notebook needs.
+#
+# Checking that the .py files merely exist is not enough: an attached dataset
+# can carry an older copy of a module that is present but missing a fix, and
+# the failure then surfaces an hour later as a traceback from deep inside a
+# library. So check for the specific functions each fix introduced.
+NEEDS = {
+    "modeling":  ["load_base_model", "disable_broken_peft_dispatchers"],
+    "evaluate":  ["diagnose_predictions", "load_predictions", "eval_boxes"],
+    "train":     ["latest_checkpoint", "warn_if_nothing_will_be_saved"],
+    "results":   ["render"],
+    "preflight": ["check_model"],
+    "infer":     ["run"],
+    "boxes":     ["to_canvas", "greedy_match"],
+}
+stale = []
+for mod, funcs in NEEDS.items():
+    path = os.path.join(WORK, "vindr_cxr_vqa", mod + ".py")
+    if not os.path.exists(path):
+        stale.append(f"{mod}.py is missing entirely")
+        continue
+    src = open(path, encoding="utf-8").read()
+    for fn in funcs:
+        if f"def {fn}" not in src:
+            stale.append(f"{mod}.{fn}()")
+if stale:
     raise SystemExit(
-        f"The attached code is out of date — missing {missing}.\\n"
-        "Rebuild with `python scripts/make_kaggle_bundle.py --part code` and "
-        "upload a new version of that dataset.")'''
+        "The attached code is OUT OF DATE. Missing:\\n  "
+        + "\\n  ".join(stale)
+        + f"\\n\\nIt was read from: {CODE_ROOT}\\n"
+        "Rebuild with `python scripts/make_kaggle_bundle.py --part code`, "
+        "upload it as a new version of that dataset, and re-run.")
+print("code check: up to date")'''
 
 OFFLINE = '''\
 # None = detect automatically; set True/False to force it.
