@@ -88,6 +88,32 @@ def test_greedy_match_respects_threshold():
     assert matches == [] and unmatched_p == [0] and unmatched_g == [0]
 
 
+def test_to_canvas_scales_pixel_boxes():
+    # A 2000x1000 image drawn onto a 200x100 canvas: everything shrinks 10x.
+    out = boxes.to_canvas((100, 200, 300, 400), "pixel", 2000, 1000, 200, 100)
+    assert out == pytest.approx((10, 20, 30, 40))
+
+
+def test_to_canvas_converts_normalized_boxes_first():
+    # 0-999 maps across the whole canvas regardless of the source resolution.
+    out = boxes.to_canvas((0, 0, 999, 999), "norm1000", 2000, 1000, 224, 224)
+    assert out == pytest.approx((0, 0, 224, 224), abs=0.5)
+
+
+def test_to_canvas_puts_both_spaces_in_the_same_place():
+    """A box and its normalized form must land on the same canvas pixels."""
+    box, w, h = (691, 1375, 1653, 1831), 2084, 2048
+    a = boxes.to_canvas(box, "pixel", w, h, 672, 672)
+    b = boxes.to_canvas(boxes.to_normalized(box, w, h), "norm1000", w, h,
+                        672, 672)
+    assert max(abs(x - y) for x, y in zip(a, b)) < 1.0
+
+
+def test_to_canvas_rejects_an_unknown_space():
+    with pytest.raises(ValueError, match="unknown coordinate space"):
+        boxes.to_canvas((0, 0, 1, 1), "cubits", 100, 100, 10, 10)
+
+
 def test_union_and_mean_box():
     bs = [(0, 0, 10, 10), (10, 10, 20, 20)]
     assert boxes.union_box(bs) == (0, 0, 20, 20)

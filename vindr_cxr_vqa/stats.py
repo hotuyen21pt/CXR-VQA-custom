@@ -31,6 +31,8 @@ PAPER_CLAIMS = {
     "test_images": 300,
     "val_gt_boxes": 5471,
     "val_boxes_per_image": 8.3,
+    # Section 3.1: "3 epochs over the 20,880-sample training set".
+    "train_samples": 20880,
     "val_multi_pathology_pct": 54.8,
     "positive_pct": 41.7,
     "negative_pct": 58.3,
@@ -162,6 +164,10 @@ def audit(s: dict) -> list[dict]:
         abs(s["val_multi_pathology_pct"] - c["val_multi_pathology_pct"]) <= 3,
         "the release is 93% multi-pathology; the 54.8% in Table 3 is not "
         "reproducible from the published data")
+
+    add("training samples", c["train_samples"], s["train_qa"], False,
+        f"Section 3.1 trains on 20,880 samples, but the whole release holds "
+        f"only {s['n_qa_pairs']:,} QA pairs — 85% of which is {s['train_qa']:,}")
 
     add("negative samples (%)", c["negative_pct"],
         round(100 * s["negative_samples"] / s["n_qa_pairs"], 1), False,

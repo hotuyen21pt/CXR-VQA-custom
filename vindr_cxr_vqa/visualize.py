@@ -18,9 +18,8 @@ from collections import defaultdict
 
 from PIL import Image, ImageDraw
 
-from .boxes import Box, extract_locs, from_normalized, iou
+from .boxes import Box, extract_locs, iou, to_canvas
 from .config import load_config
-from .constants import LOC_NORM_RANGE
 
 GREEN, YELLOW, RED = (60, 220, 60), (250, 215, 40), (240, 60, 60)
 UPSCALE = 3  # the stored PNGs are 224x224; enlarge so boxes stay legible
@@ -41,11 +40,7 @@ def _preds_by_image(path: str | None) -> dict[str, list[str]]:
 
 
 def _to_canvas(box: Box, img: dict, space: str, w: int, h: int) -> Box:
-    """Map a box in ``space`` onto the rendered canvas."""
-    if space == "norm1000":
-        box = from_normalized(box, img["width"], img["height"], LOC_NORM_RANGE)
-    sx, sy = w / img["width"], h / img["height"]
-    return (box[0] * sx, box[1] * sy, box[2] * sx, box[3] * sy)
+    return to_canvas(box, space, img["width"], img["height"], w, h)
 
 
 def _draw(d: ImageDraw.ImageDraw, box: Box, colour, label: str = "") -> None:
@@ -82,17 +77,15 @@ def render(cfg, split: str, base: str | None, ft: str | None, n: int,
         w, h = pic.size
 
         gts = [tuple(b["bbox_orig"]) for b in img["boxes_fused"]]
-        for b, meta in zip(gts, img["boxes_fused"]):
-            _draw(d, _to_canvas(b, img, "pixel", w, h), GREEN,
-                  meta["class_name"])
+        gts_canvas = [_to_canvas(b, img, "pixel", w, h) for b in gts]
+        for box, meta in zip(gts_canvas, img["boxes_fused"]):
+            _draw(d, box, GREEN, meta["class_name"])
 
         for texts, colour in ((pb.get(iid, []), YELLOW), (pf.get(iid, []), RED)):
             for t in texts:
                 for b in extract_locs(t):
                     px = _to_canvas(b, img, space, w, h)
-                    best = max((iou(_to_canvas(b, img, space, w, h), g)
-                                for g in (_to_canvas(x, img, "pixel", w, h)
-                                          for x in gts)), default=0.0)
+                    best = max((iou(px, g) for g in gts_canvas), default=0.0)
                     _draw(d, px, colour, f"IoU {best:.2f}")
 
         out = os.path.join(out_dir, f"{iid}.png")

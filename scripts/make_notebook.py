@@ -39,12 +39,17 @@ attached, the weights are downloaded instead, which needs an accepted licence
 for [`google/medgemma-4b-it`](https://huggingface.co/google/medgemma-4b-it)
 and an `HF_TOKEN` under *Add-ons → Secrets*.
 
+**What this produces.** Table 3 (dataset statistics, audited against the
+paper), Tables 4-6 for the zero-shot baseline and the fine-tuned model on both
+the validation split (what the paper reports) and the held-out test split, and
+Figure 2.
+
 **On run time.** The paper trains 3 epochs over ~21k samples in ~36 h on an
 A6000 (48 GB). A Kaggle session is capped at 12 h on a 16 GB GPU, so the
 defaults below run a single capped pass that finishes well inside one session.
-Raise `MAX_STEPS` (or set it to `-1` for the full 3 epochs) and resume across
-sessions from the checkpoint in `/kaggle/working` if you want the paper's
-exact budget."""
+Checkpoints are written every 100 steps, so raising `MAX_STEPS` (or setting it
+to `-1` for the full 3 epochs) and resuming across sessions is possible — see
+the fine-tuning section for how to carry checkpoints over."""
 
 SETUP = '''\
 import os, sys, glob, json, shutil, subprocess
@@ -256,31 +261,42 @@ print(subprocess.run([sys.executable, "-m", "vindr_cxr_vqa.evaluate",
 MD_BASELINE = """\
 ## 2. Zero-shot baseline
 
-The "Pretrained" row of Tables 4-6, measured on the **test** split — 300
-images / 1,207 QA pairs, held out from training. Expect roughly 40-60 minutes
-for the full split on a 4-bit T4; set `N_EVAL` to a few hundred for a quick
-pass first.
+The "Pretrained" row of Tables 4-6.
 
-The same split and the same `N_EVAL` are reused for the fine-tuned model below,
-so the two rows are always comparable."""
+Inference runs over the **validation** split (659 images / 2,637 QA pairs) —
+the set the paper reports on. The test split is a subset of it, so the same
+predictions score both: validation for the paper-comparable numbers, test for
+the held-out result. One pass instead of two.
+
+Expect roughly 1.5-2 h for the full split on a 4-bit T4. Set `N_EVAL` to a few
+hundred for a quick pass first; the fine-tuned run below reuses the same cap,
+so the two rows stay comparable."""
 
 BASELINE = '''\
-SPLIT  = "test"    # 300 images / 1,207 QA pairs
 N_EVAL = None      # cap the QA pairs for a quick pass; None = whole split
 
 OUT = "/kaggle/working/outputs"
-PRED_BASE = f"{OUT}/preds_{SPLIT}_base.jsonl"
-PRED_FT   = f"{OUT}/preds_{SPLIT}_ft.jsonl"
+PRED_BASE = f"{OUT}/preds_val_base.jsonl"
+PRED_FT   = f"{OUT}/preds_val_ft.jsonl"
 
 cmd = [sys.executable, "-m", "vindr_cxr_vqa.infer", "--config", CFG_PATH,
-       "--split", SPLIT, "--batch-size", "2", "--out", PRED_BASE]
+       "--split", "val", "--batch-size", "2", "--out", PRED_BASE]
 if N_EVAL:
     cmd += ["--limit", str(N_EVAL)]
 !{" ".join(cmd)}'''
 
 BASELINE_EVAL = '''\
-!{sys.executable} -m vindr_cxr_vqa.evaluate --config {CFG_PATH} \\
-    --pred {PRED_BASE} --split {SPLIT} --out {OUT}/eval_{SPLIT}_base.json'''
+def score(pred, tag):
+    """Score one prediction file against both splits."""
+    for split in ("val", "test"):
+        r = subprocess.run(
+            [sys.executable, "-m", "vindr_cxr_vqa.evaluate",
+             "--config", CFG_PATH, "--pred", pred, "--split", split,
+             "--out", f"{OUT}/eval_{split}_{tag}.json"],
+            capture_output=True, text=True)
+        print(r.stdout or r.stderr)
+
+score(PRED_BASE, "base")'''
 
 MD_TRAIN = """\
 ## 3. Fine-tune
@@ -327,32 +343,37 @@ assert any(f.startswith("adapter_model") for f in adapter_files), \\
     "no adapter weights were written — training did not finish"'''
 
 MD_EVAL = """\
-## 4. Final results on the test split
+## 4. Final results
 
 Generates with the fine-tuned adapter over the same split and cap as the
 baseline, then scores Table 4 (VQA), Table 5 (box detection at IoU >= 0.3) and
-Table 6 (per-image localization quality)."""
+Table 6 (per-image localization quality) on **both** splits:
+
+* **validation** — 659 images, directly comparable to the paper's Tables 4-6;
+* **test** — 300 held-out images, the final result."""
 
 EVAL = '''\
 cmd = [sys.executable, "-m", "vindr_cxr_vqa.infer", "--config", CFG_PATH,
-       "--split", SPLIT, "--adapter", ADAPTER, "--batch-size", "2",
+       "--split", "val", "--adapter", ADAPTER, "--batch-size", "2",
        "--out", PRED_FT]
 if N_EVAL:
     cmd += ["--limit", str(N_EVAL)]
 !{" ".join(cmd)}
 
-!{sys.executable} -m vindr_cxr_vqa.evaluate --config {CFG_PATH} \\
-    --pred {PRED_FT} --split {SPLIT} --out {OUT}/eval_{SPLIT}_ft.json'''
+score(PRED_FT, "ft")'''
 
 COMPARE = '''\
 # Final tables, baseline vs fine-tuned, with the published numbers alongside.
-!{sys.executable} -m vindr_cxr_vqa.results \\
-    --base {OUT}/eval_{SPLIT}_base.json \\
-    --ft   {OUT}/eval_{SPLIT}_ft.json \\
-    --split {SPLIT} --out {OUT}/results_{SPLIT}.md
-
 from IPython.display import Markdown, display
-display(Markdown(open(f"{OUT}/results_{SPLIT}.md").read()))'''
+
+for split in ("val", "test"):
+    subprocess.run([sys.executable, "-m", "vindr_cxr_vqa.results",
+                    "--base", f"{OUT}/eval_{split}_base.json",
+                    "--ft",   f"{OUT}/eval_{split}_ft.json",
+                    "--split", split,
+                    "--out",  f"{OUT}/results_{split}.md"],
+                   capture_output=True, text=True)
+    display(Markdown(open(f"{OUT}/results_{split}.md").read()))'''
 
 MD_VIS = """\
 ## 5. Qualitative results
@@ -363,7 +384,7 @@ fine-tuned prediction in red."""
 VIS = '''\
 !{sys.executable} -m vindr_cxr_vqa.visualize --config {CFG_PATH} \\
     --pred-base {PRED_BASE} --pred-ft {PRED_FT} \\
-    --split {SPLIT} --n 6 --out {OUT}/figures
+    --split val --n 6 --out {OUT}/figures
 
 from IPython.display import Image, display
 for p in sorted(glob.glob(f"{OUT}/figures/*.png"))[:6]:

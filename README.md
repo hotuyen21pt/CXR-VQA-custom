@@ -37,6 +37,7 @@ vindr_cxr_vqa/
   visualize.py              Figure 2 overlays
   preflight.py              check packages, GPU, weights and data before training
 scripts/
+  reproduce.py              run every result the paper reports, end to end
   make_kaggle_bundle.py     package repo + data + images into one zip
   make_notebook.py          regenerate the Kaggle notebook
   fetch_model.py            download MedGemma for offline/air-gapped use
@@ -84,26 +85,38 @@ python -m vindr_cxr_vqa.evaluate --oracle --split val
 #    -> VQA precision 1.000, localization 100% at IoU>=0.5
 ```
 
-Training needs a GPU:
+### Reproducing every result in the paper
+
+One command runs the lot — Table 3, Tables 4–6 for both the baseline and the
+fine-tuned model on both splits, Figure 2, and a consolidated
+`outputs/REPRODUCTION.md`:
 
 ```bash
 pip install -r requirements.txt
 huggingface-cli login            # google/medgemma-4b-it is gated
 
+python scripts/reproduce.py                 # everything
+python scripts/reproduce.py --stages data   # dataset + audit only, no GPU
+python scripts/reproduce.py --limit 200     # quick smoke run
+python scripts/reproduce.py --skip-train    # score an existing adapter
+```
+
+Each stage is skipped when its output already exists, so an interrupted run can
+just be restarted. Inference runs **once per model, over validation** — the
+test split is a subset of it, so the same predictions score both: validation
+for the paper-comparable numbers, test for the held-out result.
+
+The individual steps, if you want them separately:
+
+```bash
 python -m vindr_cxr_vqa.preflight --config configs/default.yaml
 python -m vindr_cxr_vqa.train     --config configs/default.yaml
-
-# Final numbers on the held-out test split (300 images / 1,207 QA pairs)
-python -m vindr_cxr_vqa.infer --split test --out outputs/preds_test_base.jsonl
-python -m vindr_cxr_vqa.infer --split test --adapter outputs/medgemma-lora \
-                              --out outputs/preds_test_ft.jsonl
-python -m vindr_cxr_vqa.evaluate --pred outputs/preds_test_base.jsonl \
-    --split test --out outputs/eval_test_base.json
-python -m vindr_cxr_vqa.evaluate --pred outputs/preds_test_ft.jsonl \
-    --split test --out outputs/eval_test_ft.json
+python -m vindr_cxr_vqa.infer --split val --out outputs/preds_val_base.jsonl
+python -m vindr_cxr_vqa.infer --split val --adapter outputs/medgemma-lora \
+                              --out outputs/preds_val_ft.jsonl
+python -m vindr_cxr_vqa.evaluate --pred outputs/preds_val_ft.jsonl --split test
 python -m vindr_cxr_vqa.results --base outputs/eval_test_base.json \
     --ft outputs/eval_test_ft.json --split test
-#    -> outputs/results_test.md   (Tables 4, 5, 6 next to the paper's numbers)
 ```
 
 ### Checkpoints and resuming
@@ -253,8 +266,13 @@ truth for Table 5) and the fused consensus boxes (`boxes_fused`).
 | `reason` length | 150–250 words | **4–40 (mean 17.8)** |
 | Negative samples | 58.3% | **0%** |
 | Validation images with ≥2 pathologies | 54.8% | **92.7%** |
+| Training samples (Section 3.1) | 20,880 | **14,960** |
 
-Regenerate with `python -m vindr_cxr_vqa.stats`.
+25 of 30 checks match. Regenerate with `python -m vindr_cxr_vqa.stats`.
+
+The last row is worth flagging separately: Section 3.1 trains on 20,880
+samples, but the entire release holds 17,597 QA pairs, so the stated training
+set is larger than all the data there is. 85% of 17,597 is the 14,960 here.
 
 Table 3 lists 3,735 + 659 = 4,394 images *and* a 300-image test split, so test
 cannot be a third partition — it is a stratified subset of validation, which is

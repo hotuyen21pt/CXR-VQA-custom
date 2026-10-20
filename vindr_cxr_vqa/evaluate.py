@@ -201,12 +201,26 @@ def eval_boxes(preds_by_image: dict[str, list[str]], index: dict[str, dict],
 
 
 # --------------------------------------------------------------------------
-def load_predictions(path: str) -> dict[str, list[str]]:
+def load_predictions(path: str,
+                     keep: set[str] | None = None) -> tuple[dict[str, list[str]], int]:
+    """Group predictions by image, keeping only ``keep`` if given.
+
+    Filtering matters because the test split is a subset of validation: one
+    inference pass over ``val`` therefore already contains every ``test``
+    prediction, and scoring the smaller split is just a matter of dropping the
+    images that are not in it.
+
+    Returns ``(by_image, n_dropped)``.
+    """
     by_image: dict[str, list[str]] = defaultdict(list)
+    dropped = 0
     for row in read_jsonl(path):
-        text = row.get("prediction") or row.get("answer") or ""
-        by_image[row["image_id"]].append(text)
-    return dict(by_image)
+        iid = row["image_id"]
+        if keep is not None and iid not in keep:
+            dropped += 1
+            continue
+        by_image[iid].append(row.get("prediction") or row.get("answer") or "")
+    return dict(by_image), dropped
 
 
 def oracle_predictions(records: list[dict], box_source: str) -> dict[str, list[str]]:
@@ -239,6 +253,8 @@ def main() -> None:
     ap.add_argument("--box-source", default=None,
                     choices=("published", "fixed"),
                     help="which ground-truth box the oracle replays")
+    ap.add_argument("--strict", action="store_true",
+                    help="score images with no prediction as complete misses")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -251,12 +267,30 @@ def main() -> None:
     if args.oracle:
         box_source = args.box_source or cfg.data.box_source
         preds = oracle_predictions(records, box_source)
-        space = "pixel"
-        tag = f"oracle:{box_source}"
+        space, tag = "pixel", f"oracle:{box_source}"
+        covered = len(preds)
+        split_ids = set(preds)
     else:
         if not args.pred:
             raise SystemExit("pass --pred <predictions.jsonl> or --oracle")
-        preds = load_predictions(args.pred)
+        split_ids = {r["image_id"] for r in records}
+        preds, dropped = load_predictions(args.pred, keep=split_ids)
+        if dropped:
+            print(f"[eval] ignored {dropped} prediction(s) outside the "
+                  f"{args.split} split")
+        covered = len(preds)
+        if covered < len(split_ids):
+            if args.strict:
+                # Unpredicted images contribute their ground truth, so their
+                # boxes and findings count as misses.
+                preds |= {i: [] for i in split_ids if i not in preds}
+                print(f"[eval] strict: {len(split_ids) - covered} unpredicted "
+                      f"image(s) scored as complete misses")
+            else:
+                print(f"[eval] NOTE: scoring {covered} of {len(split_ids)} "
+                      f"{args.split} images — the unpredicted ones are "
+                      "excluded, not counted as misses (use --strict to "
+                      "include them)")
         space = args.pred_space or (
             "norm1000" if cfg.data.loc_format == "norm1000" else "pixel")
         tag = os.path.basename(args.pred)
@@ -268,6 +302,9 @@ def main() -> None:
         cfg.eval.acceptable_localization_iou, space, match, args.gt_source)
 
     result = {"source": tag, "split": args.split, "pred_space": space,
+              "coverage": {"scored_images": covered,
+                           "split_images": len(split_ids),
+                           "strict": bool(args.strict)},
               "vqa": vqa, "detection": det, "localization": loc}
 
     print(f"\n=== {tag}  (split={args.split}, space={space}, match={match}) ===")

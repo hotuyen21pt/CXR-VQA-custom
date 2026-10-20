@@ -9,8 +9,8 @@ python -m vindr_cxr_vqa.stats             # writes outputs/dataset_report.md
 
 `outputs/dataset_report.md` is the machine-generated version of this page: it
 recomputes every statistic from `data/processed/*.jsonl` and marks each one
-`match` or `MISMATCH` against the paper. **25 of 29 checks match.** This page
-explains the four that do not, and what the repo does about them.
+`match` or `MISMATCH` against the paper. **25 of 30 checks match.** This page
+explains the five that do not, and what the repo does about them.
 
 ---
 
@@ -173,6 +173,25 @@ but training images are just as lesion-dense as validation images. The more
 likely cause is that each image gets ~4 QA pairs and therefore at most ~4
 supervised boxes, against ~8.4 ground-truth boxes at evaluation — a ceiling of
 roughly 0.48 on recall before the model makes a single error.
+
+---
+
+## Discrepancy 5 — the training set is larger than the dataset
+
+Section 3.1 states that training runs "for 3 epochs over the **20,880-sample**
+training set".
+
+The entire release contains 17,597 QA pairs. An 85% training split of that is
+**14,960** — what this repo builds. 20,880 is not merely a different split
+ratio; it exceeds the total number of samples that exist.
+
+Three readings are possible and the paper does not distinguish them: the
+training set was augmented (nothing in the text says so), a larger internal
+version of the dataset was used and a subset released, or the number is simply
+wrong. It matters because it sets the step budget: at an effective batch of 16,
+3 epochs is 3,915 steps under the paper's figure but 2,805 under the released
+data. `scripts/reproduce.py` and the Kaggle notebook use the released data, so
+`--max-steps -1` means 2,805 steps.
 
 ---
 

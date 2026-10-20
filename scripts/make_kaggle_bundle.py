@@ -27,6 +27,7 @@ sys.path.insert(0, REPO)
 
 #: Copied verbatim into the bundle root.
 CODE_ITEMS = [
+    "scripts",
     "vindr_cxr_vqa",
     "configs",
     "requirements.txt",
@@ -138,16 +139,21 @@ Self-contained copy of the repo, the built dataset and
 
 1. Kaggle → *Datasets* → *New Dataset* → upload this zip. Kaggle unpacks it,
    so the contents land at `/kaggle/input/<your-dataset-slug>/`.
-2. Open `notebooks/kaggle_train.ipynb` (File → Import Notebook), attach the
+2. Open `notebooks/kaggle_train.ipynb` (File → Import Notebook), attach this
    dataset, and set the accelerator to **GPU T4 x2** or **P100**.
-3. Set `HF_TOKEN` in *Add-ons → Secrets* — `google/medgemma-4b-it` is gated,
-   so you must accept its licence on HuggingFace first.
+3. *Add Input → Models* → attach MedGemma 4B instruction-tuned, and paste its
+   path into `MODEL_PATH` in the model cell.
 4. Run all cells.
+
+Works with Internet **off**: set `OFFLINE = True` in the second cell. No
+`HF_TOKEN` is needed once the model is attached — it only ever authenticates a
+download. The dataset is already built inside this bundle.
 
 ## Layout
 
 ```
-vindr_cxr_vqa/          package (build, train, infer, evaluate)
+vindr_cxr_vqa/          package (build, train, infer, evaluate, preflight)
+scripts/reproduce.py    run every result the paper reports, end to end
 configs/default.yaml    hyper-parameters from the paper
 data/processed/         train/val/test JSONL + images.json
 dataset/train_data/train/*.png

@@ -173,6 +173,25 @@ def match_any(
     return matches, unmatched_p, [j for j in range(len(gts)) if j not in hit_g]
 
 
+def to_canvas(box: Sequence[float], space: str, image_width: int,
+              image_height: int, canvas_width: int,
+              canvas_height: int) -> Box:
+    """Map a box onto a rendered canvas of ``canvas_width x canvas_height``.
+
+    ``space`` says what frame the box is already in: ``"pixel"`` for original
+    DICOM coordinates, ``"norm1000"`` for the normalised 0-999 space.  Used by
+    the figure renderer, where ground truth (always pixels) and predictions
+    (whatever the model was trained to emit) must land on the same image.
+    """
+    if space == "norm1000":
+        box = from_normalized(box, image_width, image_height)
+    elif space != "pixel":
+        raise ValueError(f"unknown coordinate space: {space!r}")
+    sx = canvas_width / max(image_width, 1)
+    sy = canvas_height / max(image_height, 1)
+    return (box[0] * sx, box[1] * sy, box[2] * sx, box[3] * sy)
+
+
 def union_box(boxes: Iterable[Sequence[float]]) -> Box | None:
     boxes = list(boxes)
     if not boxes:
