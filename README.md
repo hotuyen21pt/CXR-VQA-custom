@@ -33,6 +33,7 @@ vindr_cxr_vqa/
   train.py                  LoRA fine-tuning with L_VQA + 0.5 * L_bbox
   infer.py                  generation -> predictions JSONL
   evaluate.py               Tables 4, 5 and 6
+  results.py                baseline vs fine-tuned, rendered as final tables
   visualize.py              Figure 2 overlays
   preflight.py              check packages, GPU, weights and data before training
 scripts/
@@ -89,12 +90,45 @@ Training needs a GPU:
 pip install -r requirements.txt
 huggingface-cli login            # google/medgemma-4b-it is gated
 
-python -m vindr_cxr_vqa.train  --config configs/default.yaml
-python -m vindr_cxr_vqa.infer  --split val --out outputs/preds_val_base.jsonl
-python -m vindr_cxr_vqa.infer  --split val --adapter outputs/medgemma-lora \
-                               --out outputs/preds_val_ft.jsonl
-python -m vindr_cxr_vqa.evaluate --pred outputs/preds_val_ft.jsonl --split val
+python -m vindr_cxr_vqa.preflight --config configs/default.yaml
+python -m vindr_cxr_vqa.train     --config configs/default.yaml
+
+# Final numbers on the held-out test split (300 images / 1,207 QA pairs)
+python -m vindr_cxr_vqa.infer --split test --out outputs/preds_test_base.jsonl
+python -m vindr_cxr_vqa.infer --split test --adapter outputs/medgemma-lora \
+                              --out outputs/preds_test_ft.jsonl
+python -m vindr_cxr_vqa.evaluate --pred outputs/preds_test_base.jsonl \
+    --split test --out outputs/eval_test_base.json
+python -m vindr_cxr_vqa.evaluate --pred outputs/preds_test_ft.jsonl \
+    --split test --out outputs/eval_test_ft.json
+python -m vindr_cxr_vqa.results --base outputs/eval_test_base.json \
+    --ft outputs/eval_test_ft.json --split test
+#    -> outputs/results_test.md   (Tables 4, 5, 6 next to the paper's numbers)
 ```
+
+### Checkpoints and resuming
+
+`train.save_strategy` defaults to `epoch`, matching the paper. One epoch is
+~935 optimizer steps, so on a time-limited machine switch to:
+
+```yaml
+train:
+  save_strategy: steps
+  save_steps: 100
+  save_total_limit: 3
+```
+
+Checkpoints land in `<output-dir>/checkpoint-N` and `--resume auto` picks the
+newest one:
+
+```bash
+python -m vindr_cxr_vqa.train --max-steps 600 --resume auto
+```
+
+`train.py` warns if `--max-steps` would end before the first epoch while
+`save_strategy` is still `epoch` — that combination writes no intermediate
+checkpoint, so an interrupted run loses everything. The Kaggle notebook sets
+the step-based strategy automatically.
 
 ---
 
@@ -147,9 +181,16 @@ automatically right after setup.
 
 The notebook rewrites the config for a 16 GB GPU: 4-bit base weights, batch 1
 with gradient accumulation 16 to keep the paper's effective batch of 16, and
-fp16 on pre-Ampere cards. A Kaggle session caps at 12 h against the paper's
-~36 h on an A6000, so `MAX_STEPS` defaults to a capped pass; set it to `-1`
-and resume from the checkpoint across sessions for the full 3 epochs.
+fp16 on pre-Ampere cards. It trains, then runs inference and scoring on the
+**test** split and prints the final Tables 4–6 next to the published numbers.
+
+A Kaggle session caps at 12 h against the paper's ~36 h on an A6000, so
+`MAX_STEPS` defaults to a capped pass. Checkpoints are written every 100 steps
+and the train cell resumes from the newest one, so the full 3 epochs can be
+spread over several sessions — but `/kaggle/working` is wiped at the end of
+each, so use *Save Version → Save & Run All* and attach the previous run's
+output as an input. The train cell copies any `medgemma-lora` found under
+`/kaggle/input` back into place before resuming.
 
 Use `--no-images` if you would rather attach the X-rays as a separate dataset:
 

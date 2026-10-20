@@ -74,7 +74,13 @@ train:
   # 4-bit base weights (QLoRA). Required to fit a 16 GB Kaggle T4/P100.
   load_in_4bit: true
   logging_steps: 25
+  # "epoch" matches the paper ("checkpoints at the end of each epoch"), but one
+  # epoch is ~935 optimizer steps — a capped or interrupted run would then save
+  # nothing at all. Use "steps" with save_steps on a time-limited machine such
+  # as Kaggle, so the run stays resumable.
   save_strategy: epoch
+  save_steps: 100
+  save_total_limit: 3
   seed: 42
 
 loss:

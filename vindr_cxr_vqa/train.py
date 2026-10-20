@@ -118,13 +118,41 @@ def load_model(cfg):
     return model
 
 
+def latest_checkpoint(out_dir: str) -> str | None:
+    """Newest ``checkpoint-N`` directory under ``out_dir``, by step number."""
+    if not os.path.isdir(out_dir):
+        return None
+    ckpts = [(int(n.split("-")[1]), os.path.join(out_dir, n))
+             for n in os.listdir(out_dir)
+             if n.startswith("checkpoint-") and n.split("-")[-1].isdigit()]
+    return max(ckpts)[1] if ckpts else None
+
+
+def warn_if_nothing_will_be_saved(cfg, n_samples: int, max_steps: int) -> None:
+    """A capped run with per-epoch saving writes no intermediate checkpoint.
+
+    On a time-limited machine that means an interrupted session loses
+    everything, so say so loudly before the hours are spent.
+    """
+    if cfg.train.save_strategy != "epoch" or max_steps <= 0:
+        return
+    per_epoch = max(1, n_samples // (cfg.train.batch_size * cfg.train.grad_accum))
+    if max_steps < per_epoch:
+        print(f"[train] WARNING: --max-steps {max_steps} ends before the first "
+              f"epoch ({per_epoch} steps) and save_strategy is 'epoch', so no "
+              "checkpoint will be written until the run finishes.\n"
+              "[train]          Set train.save_strategy: steps (with "
+              "save_steps) to keep the run resumable.")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", default="configs/default.yaml")
     ap.add_argument("--output-dir", default=None)
     ap.add_argument("--max-steps", type=int, default=-1,
                     help="cap the run; useful for a smoke test")
-    ap.add_argument("--resume", default=None)
+    ap.add_argument("--resume", default=None,
+                    help="checkpoint directory, or 'auto' for the newest one")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -139,6 +167,13 @@ def main() -> None:
         os.path.join(cfg.paths.processed_dir, "train.jsonl"),
         cfg.paths.dataset_dir)
     print(f"[train] {len(train_ds)} training QA pairs")
+    warn_if_nothing_will_be_saved(cfg, len(train_ds), args.max_steps)
+
+    resume = args.resume
+    if resume == "auto":
+        resume = latest_checkpoint(out_dir)
+        print(f"[train] resuming from {resume}" if resume
+              else "[train] no checkpoint to resume from; starting fresh")
 
     collator = MedGemmaCollator(processor, cfg)
 
@@ -174,7 +209,9 @@ def main() -> None:
         gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=cfg.train.logging_steps,
         save_strategy=cfg.train.save_strategy,
-        save_total_limit=cfg.train.epochs,
+        # Only meaningful for save_strategy="steps"; harmless otherwise.
+        save_steps=cfg.train.save_steps,
+        save_total_limit=cfg.train.save_total_limit,
         seed=cfg.train.seed,
         remove_unused_columns=False,
         dataloader_pin_memory=False,
@@ -189,8 +226,10 @@ def main() -> None:
         bbox_loss_fn=bbox_loss_fn,
         lambda_bbox=cfg.loss.lambda_bbox,
     )
-    trainer.train(resume_from_checkpoint=args.resume)
+    trainer.train(resume_from_checkpoint=resume)
 
+    # The adapter lands in out_dir itself, next to the checkpoint-N folders,
+    # so --adapter <out_dir> is what inference loads.
     model.save_pretrained(out_dir)
     processor.save_pretrained(out_dir)
     with open(os.path.join(out_dir, "train_config.json"), "w",

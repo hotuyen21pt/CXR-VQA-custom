@@ -308,6 +308,53 @@ def test_shipped_config_loads_and_matches_the_paper():
     assert cfg.train.epochs == 3
     assert cfg.loss.lambda_bbox == pytest.approx(0.5)
     assert cfg.eval.iou_threshold == pytest.approx(0.3)
+    # Checkpointing must be fully specified, or train.py cannot build its args.
+    assert cfg.train.save_strategy in ("epoch", "steps")
+    assert cfg.train.save_steps > 0
+    assert cfg.train.save_total_limit >= 1
+
+
+# --------------------------------------------------------------------------
+# final results rendering
+# --------------------------------------------------------------------------
+def _eval_json(f1: float, miou: float) -> dict:
+    return {
+        "source": "x", "split": "test", "pred_space": "norm1000",
+        "vqa": {"accuracy": 0.5, "precision": 0.4, "recall": 0.8, "f1": f1},
+        "detection": {"precision": 0.1, "recall": 0.07, "f1": 0.08,
+                      "miou_tp": miou},
+        "localization": {"n_images": 300, "iou_ge_0.5_pct": 20.0,
+                         "iou_ge_0.3_pct": 45.0, "mean_iou_all_preds": 0.13},
+    }
+
+
+def test_results_renders_all_three_tables():
+    from vindr_cxr_vqa.results import render
+    out = render(_eval_json(0.55, 0.04), _eval_json(0.62, 0.61), "test")
+    assert "Table 4" in out and "Table 5" in out and "Table 6" in out
+    assert "Pretrained" in out and "Fine-tuned" in out
+
+
+def test_results_reports_the_relative_f1_gain():
+    from vindr_cxr_vqa.results import render
+    out = render(_eval_json(0.50, 0.04), _eval_json(0.60, 0.61), "test")
+    assert "0.500 -> 0.600 (+20.0%)" in out
+
+
+def test_results_works_with_only_one_run():
+    from vindr_cxr_vqa.results import render
+    out = render(None, _eval_json(0.62, 0.61), "test")
+    assert "Table 4" in out
+    # The missing baseline renders as em dashes, not a crash.
+    assert "—" in out
+    assert "**Δ**" not in out, "no delta row without both runs"
+
+
+def test_results_formats_percentages_and_scores_differently():
+    from vindr_cxr_vqa.results import render
+    out = render(_eval_json(0.5, 0.1), _eval_json(0.6, 0.2), "test")
+    assert "| 20.0 |" in out, "percent columns keep one decimal"
+    assert "0.600" in out, "score columns keep three decimals"
 
 
 # --------------------------------------------------------------------------

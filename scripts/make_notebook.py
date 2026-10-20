@@ -209,6 +209,13 @@ cfg["train"]["gradient_checkpointing"] = True
 # T4 and P100 are pre-Ampere: fp16, as in the paper.
 cfg["train"]["precision"] = "bf16" if torch.cuda.is_bf16_supported() else "fp16"
 
+# One epoch is ~935 optimizer steps. The paper saves per epoch, but a Kaggle
+# session can be cut short at any point, so save by step instead — that is what
+# makes `--resume auto` able to pick the run back up in a later session.
+cfg["train"]["save_strategy"] = "steps"
+cfg["train"]["save_steps"] = 100
+cfg["train"]["save_total_limit"] = 3
+
 with open(CFG_PATH, "w") as fh:
     yaml.safe_dump(cfg, fh, sort_keys=False)
 
@@ -249,23 +256,31 @@ print(subprocess.run([sys.executable, "-m", "vindr_cxr_vqa.evaluate",
 MD_BASELINE = """\
 ## 2. Zero-shot baseline
 
-The "Pretrained" row of Tables 4-6. Runs on a subset by default; drop `--limit`
-for the full 2,637 validation QA pairs (a few hours)."""
+The "Pretrained" row of Tables 4-6, measured on the **test** split — 300
+images / 1,207 QA pairs, held out from training. Expect roughly 40-60 minutes
+for the full split on a 4-bit T4; set `N_EVAL` to a few hundred for a quick
+pass first.
+
+The same split and the same `N_EVAL` are reused for the fine-tuned model below,
+so the two rows are always comparable."""
 
 BASELINE = '''\
-N_BASELINE = 200   # QA pairs; set to None for the whole validation split
+SPLIT  = "test"    # 300 images / 1,207 QA pairs
+N_EVAL = None      # cap the QA pairs for a quick pass; None = whole split
+
+OUT = "/kaggle/working/outputs"
+PRED_BASE = f"{OUT}/preds_{SPLIT}_base.jsonl"
+PRED_FT   = f"{OUT}/preds_{SPLIT}_ft.jsonl"
 
 cmd = [sys.executable, "-m", "vindr_cxr_vqa.infer", "--config", CFG_PATH,
-       "--split", "val", "--batch-size", "2",
-       "--out", "/kaggle/working/outputs/preds_val_base.jsonl"]
-if N_BASELINE:
-    cmd += ["--limit", str(N_BASELINE)]
+       "--split", SPLIT, "--batch-size", "2", "--out", PRED_BASE]
+if N_EVAL:
+    cmd += ["--limit", str(N_EVAL)]
 !{" ".join(cmd)}'''
 
 BASELINE_EVAL = '''\
 !{sys.executable} -m vindr_cxr_vqa.evaluate --config {CFG_PATH} \\
-    --pred /kaggle/working/outputs/preds_val_base.jsonl --split val \\
-    --out /kaggle/working/outputs/eval_val_base.json'''
+    --pred {PRED_BASE} --split {SPLIT} --out {OUT}/eval_{SPLIT}_base.json'''
 
 MD_TRAIN = """\
 ## 3. Fine-tune
@@ -274,68 +289,70 @@ LoRA r=16, alpha=32, dropout=0.1, AdamW at 2e-5, weight decay 0.01, effective
 batch 16, with the multi-task objective `L = L_VQA + 0.5 * L_bbox` where the
 box term is a differentiable soft-GIoU read off the coordinate digit tokens.
 
-`MAX_STEPS = -1` runs the paper's full 3 epochs; expect far more than a single
-Kaggle session. Checkpoints land in `/kaggle/working/outputs/medgemma-lora`, so
-a later session can resume with `--resume <checkpoint>`."""
+**Checkpoints.** A checkpoint is written every 100 optimizer steps into
+`/kaggle/working/outputs/medgemma-lora/checkpoint-N`, and `--resume auto` picks
+up the newest one. So if a session is cut short, re-run this cell in a new
+session and training continues rather than restarting — but **only if you saved
+the output**: `/kaggle/working` is wiped when a session ends. Use *Save Version
+→ Save & Run All*, or download `medgemma-lora.zip` from the last cell and
+re-attach it as a Dataset.
+
+`MAX_STEPS = -1` runs the paper's full 3 epochs (~2,805 steps), which is well
+beyond a single 12 h session."""
 
 TRAIN = '''\
-MAX_STEPS = 600          # -1 for the paper's full 3 epochs
-ADAPTER = "/kaggle/working/outputs/medgemma-lora"
+MAX_STEPS = 600          # -1 for the paper's full 3 epochs (~2,805 steps)
+ADAPTER = f"{OUT}/medgemma-lora"
+
+# If a previous session left checkpoints in /kaggle/input, copy them in first
+# so --resume auto can find them.
+for src in glob.glob("/kaggle/input/*/medgemma-lora"):
+    print("found previous checkpoints:", src)
+    shutil.copytree(src, ADAPTER, dirs_exist_ok=True)
 
 !{sys.executable} -m vindr_cxr_vqa.train --config {CFG_PATH} \\
-    --output-dir {ADAPTER} --max-steps {MAX_STEPS}'''
+    --output-dir {ADAPTER} --max-steps {MAX_STEPS} --resume auto'''
+
+CHECKPOINTS = '''\
+# What actually got saved.
+for p in sorted(glob.glob(f"{ADAPTER}/checkpoint-*"),
+                key=lambda s: int(s.rsplit("-", 1)[1])):
+    size = sum(os.path.getsize(os.path.join(r, f))
+               for r, _, fs in os.walk(p) for f in fs) / 2**20
+    print(f"{os.path.basename(p):<20} {size:7.1f} MB")
+
+adapter_files = [f for f in os.listdir(ADAPTER) if not f.startswith("check")]
+print("\\nfinal adapter:", adapter_files)
+assert any(f.startswith("adapter_model") for f in adapter_files), \\
+    "no adapter weights were written — training did not finish"'''
 
 MD_EVAL = """\
-## 4. Evaluate the fine-tuned model
+## 4. Final results on the test split
 
-Produces the "Fine-tuned" rows: Table 4 (VQA), Table 5 (box detection at
-IoU >= 0.3) and Table 6 (per-image localization quality)."""
+Generates with the fine-tuned adapter over the same split and cap as the
+baseline, then scores Table 4 (VQA), Table 5 (box detection at IoU >= 0.3) and
+Table 6 (per-image localization quality)."""
 
 EVAL = '''\
-# Same subset as the baseline, so the two rows are comparable.
 cmd = [sys.executable, "-m", "vindr_cxr_vqa.infer", "--config", CFG_PATH,
-       "--split", "val", "--adapter", ADAPTER, "--batch-size", "2",
-       "--out", "/kaggle/working/outputs/preds_val_ft.jsonl"]
-if N_BASELINE:
-    cmd += ["--limit", str(N_BASELINE)]
+       "--split", SPLIT, "--adapter", ADAPTER, "--batch-size", "2",
+       "--out", PRED_FT]
+if N_EVAL:
+    cmd += ["--limit", str(N_EVAL)]
 !{" ".join(cmd)}
 
 !{sys.executable} -m vindr_cxr_vqa.evaluate --config {CFG_PATH} \\
-    --pred /kaggle/working/outputs/preds_val_ft.jsonl --split val \\
-    --out /kaggle/working/outputs/eval_val_ft.json'''
+    --pred {PRED_FT} --split {SPLIT} --out {OUT}/eval_{SPLIT}_ft.json'''
 
 COMPARE = '''\
-# Side by side with the published numbers.
-import json
+# Final tables, baseline vs fine-tuned, with the published numbers alongside.
+!{sys.executable} -m vindr_cxr_vqa.results \\
+    --base {OUT}/eval_{SPLIT}_base.json \\
+    --ft   {OUT}/eval_{SPLIT}_ft.json \\
+    --split {SPLIT} --out {OUT}/results_{SPLIT}.md
 
-PAPER = {
-    "vqa":        {"Pretrained": dict(accuracy=.558, precision=.421, recall=.827, f1=.558),
-                   "Fine-tuned": dict(accuracy=.624, precision=.471, recall=.926, f1=.624)},
-    "detection":  {"Pretrained": dict(precision=.096, recall=.068, f1=.070, miou_tp=.036),
-                   "Fine-tuned": dict(precision=.120, recall=.090, f1=.103, miou_tp=.615)},
-}
-
-def load(path):
-    try:
-        with open(path) as fh:
-            return json.load(fh)
-    except FileNotFoundError:
-        return None
-
-runs = {"Pretrained": load("/kaggle/working/outputs/eval_val_base.json"),
-        "Fine-tuned": load("/kaggle/working/outputs/eval_val_ft.json")}
-
-for table, keys in (("vqa", ("accuracy", "precision", "recall", "f1")),
-                    ("detection", ("precision", "recall", "f1", "miou_tp"))):
-    print(f"\\n=== {table} ===")
-    print(f"{'model':<12}" + "".join(f"{k:>12}" for k in keys) + "   (paper)")
-    for name, res in runs.items():
-        if res is None:
-            print(f"{name:<12}  not run")
-            continue
-        got = "".join(f"{res[table][k]:>12.3f}" for k in keys)
-        want = " ".join(f"{PAPER[table][name][k]:.3f}" for k in keys)
-        print(f"{name:<12}{got}   ({want})")'''
+from IPython.display import Markdown, display
+display(Markdown(open(f"{OUT}/results_{SPLIT}.md").read()))'''
 
 MD_VIS = """\
 ## 5. Qualitative results
@@ -345,25 +362,30 @@ fine-tuned prediction in red."""
 
 VIS = '''\
 !{sys.executable} -m vindr_cxr_vqa.visualize --config {CFG_PATH} \\
-    --pred-base /kaggle/working/outputs/preds_val_base.jsonl \\
-    --pred-ft /kaggle/working/outputs/preds_val_ft.jsonl \\
-    --split val --n 6 --out /kaggle/working/outputs/figures
+    --pred-base {PRED_BASE} --pred-ft {PRED_FT} \\
+    --split {SPLIT} --n 6 --out {OUT}/figures
 
 from IPython.display import Image, display
-import glob
-for p in sorted(glob.glob("/kaggle/working/outputs/figures/*.png"))[:6]:
+for p in sorted(glob.glob(f"{OUT}/figures/*.png"))[:6]:
     print(p)
     display(Image(filename=p))'''
 
 SAVE = '''\
-# Keep the adapter and the metrics as notebook output (a few tens of MB).
-import shutil, os
-shutil.make_archive("/kaggle/working/medgemma-lora", "zip",
-                    "/kaggle/working/outputs/medgemma-lora")
-for f in sorted(glob.glob("/kaggle/working/outputs/*.json")):
-    print(f, os.path.getsize(f), "bytes")
-print("\\nadapter archive:",
-      os.path.getsize("/kaggle/working/medgemma-lora.zip") / 2**20, "MB")'''
+# /kaggle/working is wiped when the session ends — archive what matters so it
+# survives as notebook output, and so a later session can resume from it.
+shutil.make_archive("/kaggle/working/medgemma-lora", "zip", ADAPTER)
+print("adapter archive: "
+      f"{os.path.getsize('/kaggle/working/medgemma-lora.zip') / 2**20:.1f} MB")
+
+print("\\nmetrics and predictions:")
+for f in sorted(glob.glob(f"{OUT}/*.json") + glob.glob(f"{OUT}/*.md")
+                + glob.glob(f"{OUT}/*.jsonl")):
+    print(f"  {os.path.basename(f):<28} "
+          f"{os.path.getsize(f) / 2**10:8.1f} KB")
+
+print("\\nTo continue training in another session: Save Version -> Save & Run "
+      "All, then attach this notebook's output as an input next time; the "
+      "train cell copies medgemma-lora back and resumes.")'''
 
 
 def md(text: str) -> dict:
@@ -396,6 +418,7 @@ def build() -> dict:
         code(BASELINE_EVAL),
         md(MD_TRAIN),
         code(TRAIN),
+        code(CHECKPOINTS),
         md(MD_EVAL),
         code(EVAL),
         code(COMPARE),
