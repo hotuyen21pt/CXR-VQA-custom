@@ -176,17 +176,22 @@ works too; pasting them just gives a clearer error when something is missing.
 
 ### Running with Internet off
 
-Set `OFFLINE = True` in the second cell. That skips `pip install` and disables
-every hub lookup (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), so two things
-must hold:
+Detected automatically — the second cell opens a socket to pypi.org with a
+short timeout and sets `OFFLINE` from the result (override it by assigning
+`True`/`False` instead of `None`). This matters: with Internet off but the flag
+left false, `pip install` spends several minutes retrying DNS before failing.
+
+Offline skips `pip install` and disables every hub lookup
+(`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), so two things must hold:
 
 - **The weights are attached** (step 4). Nothing can be downloaded. If no
   MedGemma model is available to attach, run `python scripts/fetch_model.py`
   on a machine with internet — ≈8 GB, gated, so accept the licence first — and
   upload the resulting folder as a Kaggle Dataset.
-- **Kaggle's preinstalled `transformers` is ≥ 4.52.** MedGemma is a Gemma 3
-  model and older releases cannot load it. If it is too old you need internet
-  once, or a Dataset of wheels to `pip install --no-index` from.
+- **Kaggle's preinstalled `transformers` is ≥ 4.50.** MedGemma — both 4B-it and
+  1.5 4B-it — is a Gemma 3 model, and Google's model card gives 4.50.0 as the
+  first release supporting it. If Kaggle's is older you need internet once, or
+  a Dataset of wheels to `pip install --no-index` from.
 
 No `HF_TOKEN` is needed in this mode — it only ever authenticates a download.
 The built dataset ships inside the bundle, so `data_v1.json` is never fetched

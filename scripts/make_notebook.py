@@ -43,15 +43,14 @@ attached.
 > of yours is overwritten, but an import after attaching can still reset the
 > panel. If your inputs disappear, just add them again.
 
-**Running with Internet OFF** — set `OFFLINE = True` in the next cell. That
+**Internet on or off is detected automatically.** With it off, the notebook
 skips `pip install` and every hub lookup, so the model *must* be attached
-(step 2) and Kaggle's preinstalled `transformers` must be ≥ 4.52. The preflight
-cell verifies both before anything expensive starts.
-
-**Running with Internet ON** — leave `OFFLINE = False`. If no model is
-attached, the weights are downloaded instead, which needs an accepted licence
-for [`google/medgemma-4b-it`](https://huggingface.co/google/medgemma-4b-it)
-and an `HF_TOKEN` under *Add-ons → Secrets*.
+(step 2) and Kaggle's preinstalled `transformers` must be ≥ 4.50. With it on
+and no model attached, the weights are downloaded instead, which needs an
+accepted licence for
+[`google/medgemma-4b-it`](https://huggingface.co/google/medgemma-4b-it) and an
+`HF_TOKEN` under *Add-ons → Secrets*. The preflight cell checks whichever path
+you are on before anything expensive starts.
 
 **What this produces.** Table 3 (dataset statistics, audited against the
 paper), Tables 4-6 for the zero-shot baseline and the fine-tuned model on both
@@ -126,15 +125,27 @@ print("cwd:", os.getcwd())
 print(os.listdir(WORK))'''
 
 OFFLINE = '''\
-# Set this to True when the notebook runs with Internet switched OFF.
-# Offline mode changes three things: no pip install, no model download, and
-# no hub lookups at all. See the markdown cell below for what to attach.
-OFFLINE = False
+# None = detect automatically; set True/False to force it.
+# Detection matters: with Internet off but OFFLINE false, pip spends minutes
+# retrying DNS before giving up.
+OFFLINE = None
+
+def has_internet(host="pypi.org", port=443, timeout=4):
+    import socket
+    try:
+        socket.create_connection((host, port), timeout=timeout).close()
+        return True
+    except OSError:
+        return False
+
+if OFFLINE is None:
+    OFFLINE = not has_internet()
+    print(f"detected: {'no internet' if OFFLINE else 'internet available'}")
 
 if OFFLINE:
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    print("offline mode: nothing will be downloaded")
+    print("offline mode: no pip install, no downloads, no hub lookups")
 else:
     print("online mode: packages and weights may be fetched")'''
 
@@ -142,8 +153,10 @@ INSTALL = '''\
 # MedGemma is a Gemma 3 model: it needs a recent transformers.
 # With Internet off this is skipped — the preflight cell below checks whether
 # Kaggle's preinstalled versions are new enough.
+# --retries/--timeout keep a misdetected network from stalling for minutes.
 if not OFFLINE:
-    %pip install -q -U "transformers>=4.52" "accelerate>=1.4" "peft>=0.14" \\
+    %pip install -q -U --retries 1 --timeout 15 \\
+        "transformers>=4.50" "accelerate>=1.4" "peft>=0.14" \\
         "bitsandbytes>=0.45" pyyaml
 
 import torch, transformers
