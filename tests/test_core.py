@@ -341,6 +341,40 @@ def test_shipped_config_loads_and_matches_the_paper():
 
 
 # --------------------------------------------------------------------------
+# quantization selection
+#
+# modeling.py imports torch lazily, so the decision logic is testable on a
+# machine with no GPU stack -- which is exactly where getting it wrong is
+# easiest.
+# --------------------------------------------------------------------------
+from vindr_cxr_vqa import modeling  # noqa: E402
+
+
+def test_no_quantization_when_not_requested():
+    assert modeling.build_quantization_config(False) == (None, False)
+
+
+def test_large_gpu_skips_4bit_when_bitsandbytes_is_missing(monkeypatch):
+    """A 95 GB card does not need 4-bit, so a missing bitsandbytes is fine."""
+    monkeypatch.setattr(modeling, "has_bitsandbytes", lambda: False)
+    monkeypatch.setattr(modeling, "gpu_memory_gb", lambda: 95.0)
+    assert modeling.build_quantization_config(True) == (None, False)
+
+
+def test_small_gpu_without_bitsandbytes_fails_with_guidance(monkeypatch):
+    monkeypatch.setattr(modeling, "has_bitsandbytes", lambda: False)
+    monkeypatch.setattr(modeling, "gpu_memory_gb", lambda: 15.0)
+    with pytest.raises(SystemExit, match="bitsandbytes"):
+        modeling.build_quantization_config(True)
+
+
+def test_the_floor_is_the_one_preflight_reports():
+    """Both modules warn about the same threshold, so they must agree."""
+    from vindr_cxr_vqa import preflight
+    assert modeling.FP16_VRAM_FLOOR_GB == preflight.FP16_VRAM_FLOOR_GB
+
+
+# --------------------------------------------------------------------------
 # final results rendering
 # --------------------------------------------------------------------------
 def _eval_json(f1: float, miou: float) -> dict:

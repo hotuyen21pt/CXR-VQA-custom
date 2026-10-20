@@ -27,14 +27,17 @@ Dataset for Explainable Chest X-ray Analysis with Multi-Task Learning*.
    via *Add Input*. Paste its path into `BUNDLE` in the setup cell, e.g.
    `/kaggle/input/datasets/<user>/vqa-repo`.
 
-   Or attach two inputs — `--part code` (≈9 MB) and `--part images` (≈362 MB).
-   The images never change, so later code fixes then cost a 9 MB re-upload
+   Or attach two inputs — `--part code` (≈6 MB) and `--part images` (≈356 MB).
+   The images never change, so later code fixes then cost a 6 MB re-upload
    instead of 362 MB. The setup cell finds both either way.
 2. **Attach the model.** *Add Input → Models* → MedGemma 4B instruction-tuned
    (Transformers); MedGemma **1.5** 4B-it works too — both are Gemma 3 and load
    through the same `AutoModelForImageTextToText` path. Paste its path into
    `MODEL_PATH` a few cells down.
-3. **Accelerator** → `GPU T4 x2` or `GPU P100`. *Settings → Accelerator*.
+3. **Accelerator** → any GPU. *Settings → Accelerator*. The config cell sizes
+   the run to whatever card you get: on 40 GB or more it uses the paper's own
+   batch 4 × accum 4 with full-precision weights; on 16 GB it falls back to
+   batch 1 × accum 16 with 4-bit weights, which needs `bitsandbytes`.
 
 Both paths can be left empty — the cells search the attached inputs — but
 pasting them is faster and gives a clearer error when something is not
@@ -62,11 +65,11 @@ the validation split (what the paper reports) and the held-out test split, and
 Figure 2.
 
 **On run time.** The paper trains 3 epochs over ~21k samples in ~36 h on an
-A6000 (48 GB). A Kaggle session is capped at 12 h on a 16 GB GPU, so the
-defaults below run a single capped pass that finishes well inside one session.
-Checkpoints are written every 100 steps, so raising `MAX_STEPS` (or setting it
-to `-1` for the full 3 epochs) and resuming across sessions is possible — see
-the fine-tuning section for how to carry checkpoints over."""
+A6000 (48 GB); the released data gives 14,960 training pairs, so 3 epochs is
+2,805 optimizer steps here. A Kaggle session is capped at 12 h, so `MAX_STEPS`
+defaults to a capped pass. Checkpoints are written every 100 steps, so raising
+it (or setting `-1` for the full 3 epochs) and resuming across sessions works —
+see the fine-tuning section for how to carry checkpoints over."""
 
 SETUP = '''\
 import os, sys, glob, json, shutil, subprocess
@@ -290,15 +293,31 @@ cfg["paths"]["output_dir"]    = "/kaggle/working/outputs"
 # Point the model at the attached weights (or the hub id, when online).
 cfg["model"]["name"] = MODEL_PATH
 
-# The paper uses batch 4 x grad-accum 4 on a 48 GB A6000. A 16 GB T4/P100
-# holds one sample at a time, so keep the effective batch at 16 by trading
-# batch size for accumulation.
-cfg["train"]["batch_size"] = 1
-cfg["train"]["grad_accum"] = 16
-cfg["train"]["load_in_4bit"] = True
-cfg["train"]["gradient_checkpointing"] = True
-# T4 and P100 are pre-Ampere: fp16, as in the paper.
-cfg["train"]["precision"] = "bf16" if torch.cuda.is_bf16_supported() else "fp16"
+# Size the run to the GPU Kaggle actually handed us. The paper used batch 4 x
+# grad-accum 4 (effective 16) on a 48 GB A6000; keep that effective batch and
+# trade batch size for accumulation on smaller cards. Quantizing is only worth
+# it when the weights would not otherwise fit.
+VRAM = (torch.cuda.get_device_properties(0).total_memory / 2**30
+        if torch.cuda.is_available() else 0)
+if VRAM >= 40:        # A6000-class or better: the paper's own settings
+    batch, accum, four_bit, ckpt = 4, 4, False, False
+elif VRAM >= 24:      # L4, A10, 3090
+    batch, accum, four_bit, ckpt = 2, 8, False, True
+else:                 # T4, P100
+    batch, accum, four_bit, ckpt = 1, 16, True, True
+
+cfg["train"]["batch_size"] = batch
+cfg["train"]["grad_accum"] = accum
+cfg["train"]["load_in_4bit"] = four_bit
+cfg["train"]["gradient_checkpointing"] = ckpt
+# bf16 on Ampere and newer; fp16 on T4/P100, as in the paper.
+cfg["train"]["precision"] = ("bf16" if torch.cuda.is_available()
+                             and torch.cuda.is_bf16_supported() else "fp16")
+# Generation is far lighter than training, so it can use a wider batch.
+INFER_BATCH = 16 if VRAM >= 40 else (8 if VRAM >= 24 else 2)
+print(f"sized for {VRAM:.0f} GB: batch {batch} x accum {accum} "
+      f"(effective {batch * accum}), 4-bit={four_bit}, "
+      f"inference batch {INFER_BATCH}")
 
 # One epoch is ~935 optimizer steps. The paper saves per epoch, but a Kaggle
 # session can be cut short at any point, so save by step instead — that is what
@@ -323,7 +342,13 @@ in one pass, so a missing piece surfaces now rather than forty minutes into
 training. It exits non-zero if anything is blocking."""
 
 PREFLIGHT = '''\
-!{sys.executable} -m vindr_cxr_vqa.preflight --config {CFG_PATH}'''
+# Stop here on a blocking problem rather than failing hours later.
+r = subprocess.run([sys.executable, "-m", "vindr_cxr_vqa.preflight",
+                    "--config", CFG_PATH], capture_output=True, text=True)
+print(r.stdout or r.stderr)
+if r.returncode != 0:
+    raise SystemExit("Preflight found blocking problems — fix them above "
+                     "before running the rest of the notebook.")'''
 
 MD_VERIFY = """\
 ## 1. Verify the dataset
@@ -366,7 +391,8 @@ PRED_BASE = f"{OUT}/preds_val_base.jsonl"
 PRED_FT   = f"{OUT}/preds_val_ft.jsonl"
 
 cmd = [sys.executable, "-m", "vindr_cxr_vqa.infer", "--config", CFG_PATH,
-       "--split", "val", "--batch-size", "2", "--out", PRED_BASE]
+       "--split", "val", "--batch-size", str(INFER_BATCH),
+       "--out", PRED_BASE]
 if N_EVAL:
     cmd += ["--limit", str(N_EVAL)]
 !{" ".join(cmd)}'''
@@ -440,8 +466,8 @@ Table 6 (per-image localization quality) on **both** splits:
 
 EVAL = '''\
 cmd = [sys.executable, "-m", "vindr_cxr_vqa.infer", "--config", CFG_PATH,
-       "--split", "val", "--adapter", ADAPTER, "--batch-size", "2",
-       "--out", PRED_FT]
+       "--split", "val", "--adapter", ADAPTER,
+       "--batch-size", str(INFER_BATCH), "--out", PRED_FT]
 if N_EVAL:
     cmd += ["--limit", str(N_EVAL)]
 !{" ".join(cmd)}

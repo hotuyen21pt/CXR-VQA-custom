@@ -17,12 +17,12 @@ import json
 import os
 
 import torch
-from transformers import (AutoModelForImageTextToText, AutoProcessor,
-                          Trainer, TrainingArguments)
+from transformers import AutoProcessor, Trainer, TrainingArguments
 
 from .config import load_config
 from .data import MedGemmaCollator, VinDrCXRVQADataset, digit_token_ids
 from .losses import SoftBoxGIoULoss, gather_digit_logits, multitask_loss
+from .modeling import load_base_model
 
 
 class MultiTaskTrainer(Trainer):
@@ -66,35 +66,16 @@ class MultiTaskTrainer(Trainer):
 
 
 # --------------------------------------------------------------------------
-def load_model(cfg):
-    """Load MedGemma and wrap the language side in LoRA adapters."""
+def load_model(cfg) -> tuple[object, bool]:
+    """Load MedGemma and wrap the language side in LoRA adapters.
+
+    Returns ``(model, used_4bit)``; the caller needs the flag to choose
+    between a paged 8-bit optimizer and plain AdamW.
+    """
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-    quant = None
-    if cfg.train.load_in_4bit:
-        from transformers import BitsAndBytesConfig
-        quant = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=(
-                torch.bfloat16 if torch.cuda.is_bf16_supported()
-                else torch.float16),
-        )
-
-    dtype = cfg.model.torch_dtype
-    if dtype == "auto":
-        dtype = (torch.bfloat16 if torch.cuda.is_available()
-                 and torch.cuda.is_bf16_supported() else torch.float16)
-
-    model = AutoModelForImageTextToText.from_pretrained(
-        cfg.model.name,
-        torch_dtype=dtype,
-        quantization_config=quant,
-        attn_implementation=cfg.model.attn_implementation,
-        device_map="auto" if torch.cuda.is_available() else None,
-    )
-    if quant is not None:
+    model, used_4bit = load_base_model(cfg)
+    if used_4bit:
         model = prepare_model_for_kbit_training(
             model, use_gradient_checkpointing=cfg.train.gradient_checkpointing)
 
@@ -115,7 +96,7 @@ def load_model(cfg):
     )
     model = get_peft_model(model, peft_cfg)
     model.print_trainable_parameters()
-    return model
+    return model, used_4bit
 
 
 def latest_checkpoint(out_dir: str) -> str | None:
@@ -187,7 +168,7 @@ def main() -> None:
                 digit_token_ids(processor.tokenizer),
                 digits_per_coord=collator.digits_per_coord)
 
-    model = load_model(cfg)
+    model, used_4bit = load_model(cfg)
 
     bf16 = (cfg.train.precision == "bf16"
             or (cfg.train.precision == "auto" and torch.cuda.is_bf16_supported()))
@@ -202,7 +183,9 @@ def main() -> None:
         warmup_ratio=cfg.train.warmup_ratio,
         lr_scheduler_type=cfg.train.lr_scheduler,
         max_grad_norm=cfg.train.max_grad_norm,
-        optim="paged_adamw_8bit" if cfg.train.load_in_4bit else "adamw_torch",
+        # The paged optimizer is a bitsandbytes feature, so it is only
+        # available when the base weights were actually quantized.
+        optim="paged_adamw_8bit" if used_4bit else "adamw_torch",
         fp16=not bf16,
         bf16=bf16,
         gradient_checkpointing=cfg.train.gradient_checkpointing,

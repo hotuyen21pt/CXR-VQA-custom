@@ -38,6 +38,23 @@ OPTIONAL = {
 MODEL_FILES = ("config.json", "preprocessor_config.json", "tokenizer.json")
 
 
+#: Below this much VRAM, 4-bit base weights are worth installing bitsandbytes
+#: for; above it the loader just uses full-precision weights. Kept in step with
+#: modeling.FP16_VRAM_FLOOR_GB, but duplicated so preflight never imports torch
+#: transitively through a module that may itself be broken.
+FP16_VRAM_FLOOR_GB = 24.0
+
+
+def _vram_gb() -> float:
+    try:
+        import torch
+    except ImportError:
+        return 0.0
+    if not torch.cuda.is_available():
+        return 0.0
+    return torch.cuda.get_device_properties(0).total_memory / 2**30
+
+
 def _version(mod) -> str:
     return getattr(mod, "__version__", None) or getattr(mod, "VERSION", "?")
 
@@ -88,15 +105,22 @@ def check_packages(rep: Report, need_4bit: bool) -> None:
         else:
             rep.add(True, name, str(got))
 
+    vram = _vram_gb()
     for name, minimum in OPTIONAL.items():
-        required_here = need_4bit and name == "bitsandbytes"
         try:
             mod = importlib.import_module(name)
         except ImportError:
-            rep.add(False if required_here else None, name,
-                    "not installed"
-                    + (" but train.load_in_4bit is true" if required_here
-                       else " (optional)"))
+            if name != "bitsandbytes" or not need_4bit:
+                rep.add(None, name, "not installed (optional)")
+            elif vram >= FP16_VRAM_FLOOR_GB:
+                # modeling.build_quantization_config falls back by itself.
+                rep.add(None, name, f"not installed, but {vram:.0f} GB of VRAM "
+                                    "means 4-bit is unnecessary — the loader "
+                                    "will use full-precision weights")
+            else:
+                rep.add(False, name, "not installed, train.load_in_4bit is "
+                                     f"true, and only {vram:.0f} GB of VRAM — "
+                                     "pip install -U bitsandbytes>=0.46.1")
             continue
         rep.add(True, name, str(_version(mod)))
 

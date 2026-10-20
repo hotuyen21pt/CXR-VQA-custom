@@ -19,30 +19,15 @@ import os
 
 import torch
 from PIL import Image
-from transformers import AutoModelForImageTextToText, AutoProcessor
+from transformers import AutoProcessor
 
 from .config import load_config
+from .modeling import load_base_model
 from .prompts import build_messages
 
 
-def load_model(cfg, adapter: str | None, load_in_4bit: bool):
-    quant = None
-    if load_in_4bit:
-        from transformers import BitsAndBytesConfig
-        quant = BitsAndBytesConfig(
-            load_in_4bit=True, bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_compute_dtype=(
-                torch.bfloat16 if torch.cuda.is_available()
-                and torch.cuda.is_bf16_supported() else torch.float16))
-
-    dtype = (torch.bfloat16 if torch.cuda.is_available()
-             and torch.cuda.is_bf16_supported() else torch.float16)
-    model = AutoModelForImageTextToText.from_pretrained(
-        cfg.model.name, torch_dtype=dtype, quantization_config=quant,
-        attn_implementation=cfg.model.attn_implementation,
-        device_map="auto" if torch.cuda.is_available() else None)
-
+def load_model(cfg, adapter: str | None, load_in_4bit: bool | None):
+    model, _ = load_base_model(cfg, load_in_4bit=load_in_4bit)
     if adapter:
         from peft import PeftModel
         model = PeftModel.from_pretrained(model, adapter)
@@ -52,7 +37,8 @@ def load_model(cfg, adapter: str | None, load_in_4bit: bool):
 
 @torch.no_grad()
 def run(cfg, split: str, adapter: str | None, out_path: str,
-        limit: int | None, batch_size: int, load_in_4bit: bool) -> str:
+        limit: int | None, batch_size: int,
+        load_in_4bit: bool | None = None) -> str:
     processor = AutoProcessor.from_pretrained(
         adapter if adapter and os.path.exists(
             os.path.join(adapter, "preprocessor_config.json")) else cfg.model.name)
@@ -125,15 +111,17 @@ def main() -> None:
     ap.add_argument("--out", default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=4)
-    ap.add_argument("--no-4bit", action="store_true")
+    ap.add_argument("--no-4bit", action="store_true",
+                    help="force full-precision weights, overriding the config")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     tag = "ft" if args.adapter else "base"
     out = args.out or os.path.join(cfg.paths.output_dir,
                                    f"preds_{args.split}_{tag}.jsonl")
+    # None means "whatever train.load_in_4bit says"; --no-4bit forces it off.
     run(cfg, args.split, args.adapter, out, args.limit, args.batch_size,
-        load_in_4bit=not args.no_4bit)
+        load_in_4bit=False if args.no_4bit else None)
     print("[infer] next: python -m vindr_cxr_vqa.evaluate "
           f"--pred {out} --split {args.split}")
 

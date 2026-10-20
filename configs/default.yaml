@@ -71,7 +71,10 @@ train:
   max_grad_norm: 1.0
   precision: fp16
   gradient_checkpointing: true
-  # 4-bit base weights (QLoRA). Required to fit a 16 GB Kaggle T4/P100.
+  # 4-bit base weights (QLoRA), to fit a 16 GB card such as a Kaggle T4/P100.
+  # Needs bitsandbytes; on a GPU with ~24 GB or more the loader drops it by
+  # itself, since there it would only be slower. So this is a ceiling, not a
+  # requirement -- and the paper itself trained unquantized on a 48 GB A6000.
   load_in_4bit: true
   logging_steps: 25
   # "epoch" matches the paper ("checkpoints at the end of each epoch"), but one

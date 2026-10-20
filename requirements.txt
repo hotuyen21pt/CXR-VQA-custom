@@ -3,10 +3,11 @@
 
 # --- model -----------------------------------------------------------------
 torch>=2.4
-transformers>=4.52        # MedGemma is a Gemma 3 model
+transformers>=4.50        # MedGemma (4B-it and 1.5 4B-it) is a Gemma 3 model
 accelerate>=1.4
 peft>=0.14                # LoRA
-bitsandbytes>=0.45        # 4-bit base weights (QLoRA), for 16 GB GPUs
+bitsandbytes>=0.46.1      # only for 4-bit base weights on GPUs under ~24 GB;
+                          # the loader skips it when the card is big enough
 sentencepiece>=0.2
 
 # --- images and config -----------------------------------------------------

@@ -128,3 +128,15 @@ def test_multitask_loss_applies_lambda():
 def test_soft_loss_rejects_a_bad_digit_table():
     with pytest.raises(ValueError):
         SoftBoxGIoULoss([1, 2, 3])
+
+
+def test_resolve_dtype_honours_an_explicit_choice():
+    from vindr_cxr_vqa import modeling
+    assert modeling.resolve_dtype("float16") is torch.float16
+    assert modeling.resolve_dtype("bfloat16") is torch.bfloat16
+    assert modeling.resolve_dtype(torch.float32) is torch.float32
+
+
+def test_resolve_dtype_auto_picks_a_half_precision_type():
+    from vindr_cxr_vqa import modeling
+    assert modeling.resolve_dtype("auto") in (torch.bfloat16, torch.float16)
