@@ -22,7 +22,7 @@ from transformers import AutoProcessor, Trainer, TrainingArguments
 from .config import load_config
 from .data import MedGemmaCollator, VinDrCXRVQADataset, digit_token_ids
 from .losses import SoftBoxGIoULoss, gather_digit_logits, multitask_loss
-from .modeling import load_base_model
+from .modeling import disable_broken_peft_dispatchers, load_base_model
 
 
 class MultiTaskTrainer(Trainer):
@@ -94,6 +94,7 @@ def load_model(cfg) -> tuple[object, bool]:
         # Keep the adapters off the vision tower, matching the frozen encoder.
         modules_to_save=None,
     )
+    disable_broken_peft_dispatchers()
     model = get_peft_model(model, peft_cfg)
     model.print_trainable_parameters()
     return model, used_4bit

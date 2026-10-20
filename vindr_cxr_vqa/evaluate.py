@@ -23,7 +23,8 @@ import json
 import os
 from collections import defaultdict
 
-from .boxes import Box, extract_locs, from_normalized, greedy_match, iou, match_any
+from .boxes import (LOC_RE, Box, extract_locs, from_normalized, greedy_match,
+                    iou, match_any)
 from .config import load_config
 from .constants import LOC_NORM_RANGE, PATHOLOGIES, PATHOLOGY_SYNONYMS
 
@@ -201,6 +202,28 @@ def eval_boxes(preds_by_image: dict[str, list[str]], index: dict[str, dict],
 
 
 # --------------------------------------------------------------------------
+def diagnose_predictions(by_image: dict[str, list[str]]) -> dict:
+    """Why the box metrics look the way they do.
+
+    A detection score of zero has two very different causes: the model never
+    emitted a ``<loc_...>`` span at all, or it emitted them in the wrong
+    place. Only the second is a model failure; the first is a formatting
+    failure, and the numbers mean nothing until it is fixed.
+    """
+    texts = [t for ts in by_image.values() for t in ts]
+    with_loc = [t for t in texts if LOC_RE.search(t)]
+    empty = [t for t in texts if not t.strip()]
+    lengths = sorted(len(t.split()) for t in texts) or [0]
+    return {
+        "n_predictions": len(texts),
+        "with_loc_span": len(with_loc),
+        "with_loc_pct": round(100 * len(with_loc) / len(texts), 1) if texts else 0.0,
+        "empty": len(empty),
+        "median_words": lengths[len(lengths) // 2],
+        "sample": next((t for t in texts if t.strip()), "")[:400],
+    }
+
+
 def load_predictions(path: str,
                      keep: set[str] | None = None) -> tuple[dict[str, list[str]], int]:
     """Group predictions by image, keeping only ``keep`` if given.
@@ -301,10 +324,12 @@ def main() -> None:
         preds, index, cfg.eval.iou_threshold, cfg.eval.good_localization_iou,
         cfg.eval.acceptable_localization_iou, space, match, args.gt_source)
 
+    diag = diagnose_predictions(preds)
     result = {"source": tag, "split": args.split, "pred_space": space,
               "coverage": {"scored_images": covered,
                            "split_images": len(split_ids),
                            "strict": bool(args.strict)},
+              "format": diag,
               "vqa": vqa, "detection": det, "localization": loc}
 
     print(f"\n=== {tag}  (split={args.split}, space={space}, match={match}) ===")
@@ -322,6 +347,16 @@ def main() -> None:
         if k.endswith("_pct"):
             print(f"  {k:<22} {v:.1f}")
     print(f"  mean IoU (all preds)   {loc['mean_iou_all_preds']:.3f}")
+
+    print(f"\nOutput format: {diag['with_loc_span']}/{diag['n_predictions']} "
+          f"predictions contain a <loc_...> span ({diag['with_loc_pct']}%), "
+          f"median {diag['median_words']} words")
+    if diag["with_loc_pct"] < 1.0:
+        # Without a single span there is nothing to localize, so Tables 5 and
+        # 6 are measuring the prompt, not the model.
+        print("  WARNING: essentially no boxes were emitted, so the detection "
+              "and localization numbers above are vacuous rather than poor.")
+        print(f"  A sample prediction: {diag['sample']!r}")
 
     out = args.out or os.path.join(
         cfg.paths.output_dir,

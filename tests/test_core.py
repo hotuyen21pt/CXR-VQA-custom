@@ -471,3 +471,71 @@ def test_repaired_boxes_belong_to_their_finding():
             bad += 1
     assert checked > 0
     assert bad == 0, f"{bad}/{checked} repaired boxes miss their own class"
+
+
+# --------------------------------------------------------------------------
+# prediction-format diagnostics
+# --------------------------------------------------------------------------
+def test_diagnostics_spot_a_model_that_emits_no_boxes():
+    from vindr_cxr_vqa.evaluate import diagnose_predictions
+    d = diagnose_predictions({"a": ["The lungs are clear.", "Cardiomegaly."]})
+    assert d["n_predictions"] == 2
+    assert d["with_loc_span"] == 0 and d["with_loc_pct"] == 0.0
+    assert d["sample"].startswith("The lungs")
+
+
+def test_diagnostics_count_spans_not_boxes():
+    from vindr_cxr_vqa.evaluate import diagnose_predictions
+    d = diagnose_predictions({
+        "a": ["Cardiomegaly <loc_001_002_003_004>.",
+              "Two <loc_1_2_3_4> and <loc_5_6_7_8>.",
+              "No span here."]})
+    # Two of three predictions carry at least one span.
+    assert d["with_loc_span"] == 2
+    assert d["with_loc_pct"] == pytest.approx(66.7, abs=0.1)
+
+
+def test_diagnostics_handle_no_predictions():
+    from vindr_cxr_vqa.evaluate import diagnose_predictions
+    d = diagnose_predictions({})
+    assert d["n_predictions"] == 0 and d["with_loc_pct"] == 0.0
+
+
+# --------------------------------------------------------------------------
+# peft dispatcher shim
+# --------------------------------------------------------------------------
+def test_broken_peft_probe_is_disabled(monkeypatch):
+    """A probe that raises is forced to False; a working one is untouched."""
+    import sys
+    import types
+
+    import_utils = types.ModuleType("peft.import_utils")
+
+    def raises():
+        raise ImportError("Found an incompatible version of torchao")
+
+    import_utils.is_torchao_available = raises
+    import_utils.is_hqq_available = lambda: True
+
+    dispatcher = types.ModuleType("peft.tuners.lora.torchao")
+    dispatcher.is_torchao_available = raises
+
+    peft = types.ModuleType("peft")
+    peft.import_utils = import_utils
+    for name, mod in (("peft", peft), ("peft.import_utils", import_utils),
+                      ("peft.tuners.lora.torchao", dispatcher)):
+        monkeypatch.setitem(sys.modules, name, mod)
+
+    disabled = modeling.disable_broken_peft_dispatchers()
+    assert disabled == ["is_torchao_available"]
+    assert import_utils.is_torchao_available() is False
+    # The dispatcher module bound the name itself, so it must be patched too.
+    assert dispatcher.is_torchao_available() is False
+    # A healthy probe keeps its real answer.
+    assert import_utils.is_hqq_available() is True
+
+
+def test_shim_is_a_no_op_without_peft(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "peft", None)
+    assert modeling.disable_broken_peft_dispatchers() == []

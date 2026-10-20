@@ -22,7 +22,7 @@ from PIL import Image
 from transformers import AutoProcessor
 
 from .config import load_config
-from .modeling import load_base_model
+from .modeling import disable_broken_peft_dispatchers, load_base_model
 from .prompts import build_messages
 
 
@@ -30,6 +30,7 @@ def load_model(cfg, adapter: str | None, load_in_4bit: bool | None):
     model, _ = load_base_model(cfg, load_in_4bit=load_in_4bit)
     if adapter:
         from peft import PeftModel
+        disable_broken_peft_dispatchers()
         model = PeftModel.from_pretrained(model, adapter)
         print(f"[infer] loaded LoRA adapter from {adapter}")
     return model.eval()
