@@ -42,6 +42,10 @@ scripts/
   make_notebook.py          regenerate the Kaggle notebook
   fetch_model.py            download MedGemma for offline/air-gapped use
 notebooks/kaggle_train.ipynb
+docs/
+  DATA_NOTES.md             what the released data actually contains
+  EVALUATION.md             the metrics explained from scratch
+  EVALUATION.vi.md          the same, in Vietnamese
 tests/                      pytest, no GPU needed
 ```
 
@@ -78,7 +82,7 @@ python -m vindr_cxr_vqa.build_dataset --config configs/default.yaml
 
 # 2. Verify it against the paper
 python -m vindr_cxr_vqa.stats
-#    -> outputs/dataset_report.md   (25/29 checks match; see docs/DATA_NOTES.md)
+#    -> outputs/dataset_report.md   (25/30 checks match; see docs/DATA_NOTES.md)
 
 # 3. Self-test the scorer: replay the ground truth as predictions
 python -m vindr_cxr_vqa.evaluate --oracle --split val
@@ -305,6 +309,89 @@ Table 3 lists 3,735 + 659 = 4,394 images *and* a 300-image test split, so test
 cannot be a third partition — it is a stratified subset of validation, which is
 also the set Tables 4–6 are computed on. Pass `--disjoint-test` to carve it out
 instead.
+
+---
+
+## Evaluation, step by step
+
+New to computer vision? **[docs/EVALUATION.md](docs/EVALUATION.md)** explains
+all of this from scratch — what IoU is, what precision and recall mean, why
+accuracy is misleading here, and how to read the output — with worked
+arithmetic on real records. Vietnamese: **[docs/EVALUATION.vi.md](docs/EVALUATION.vi.md)**.
+
+The short version. Three commands, in order:
+
+```bash
+# 1. the model answers every question on the split, writing what it said
+python -m vindr_cxr_vqa.infer --split val --out outputs/preds_val_ft.jsonl
+
+# 2. grade those answers -> the three tables
+python -m vindr_cxr_vqa.evaluate --pred outputs/preds_val_ft.jsonl --split val
+
+# 3. put baseline and fine-tuned side by side
+python -m vindr_cxr_vqa.results --base outputs/eval_val_base.json \
+    --ft outputs/eval_val_ft.json --split val
+```
+
+### What is actually graded
+
+Each image carries 3–5 questions across six types — `Yes_No`, `Is_there`,
+`What`, `Where`, `How_many`, `Which`. **The metrics do not grade whether a
+Yes/No question got "yes" or "no" right**, for two reasons: every question in
+the release is about a finding that is genuinely present, so "yes" is always
+correct and grading it measures nothing; and the reference answers do not
+respect their own question type (`How many findings are there?` is answered
+with `Yes, Pulmonary fibrosis <loc_…>`).
+
+So evaluation ignores question type and asks two things per **image**:
+
+| Table | Question | Metrics |
+| --- | --- | --- |
+| **4** | Which of the 14 pathologies did the model name, anywhere in its answers? | Accuracy, Precision, Recall, **F1** |
+| **5** | Do its rectangles overlap real lesions? | Precision, Recall, F1, mIoU over true positives |
+| **6** | On what share of images is at least one rectangle usable? | % at IoU≥0.5, % at IoU≥0.3, mean IoU |
+
+### The metrics in one paragraph each
+
+**Precision** — of the pathologies the model claimed, how many were real.
+Low precision means it hallucinates findings. **Recall** — of the pathologies
+really present, how many it caught. Low recall means it misses disease.
+**F1** — the harmonic mean of the two, which punishes lopsidedness: a model
+with precision 1.00 and recall 0.02 has F1 0.04, not 0.51. F1 is the paper's
+headline number (0.558 → 0.624).
+
+**Accuracy is reported but should not be trusted here.** Most of the 14
+pathologies are absent from any given image, so a model that says nothing at
+all still scores about 0.75 — accuracy rewards silence.
+
+**IoU** (intersection over union) is overlap area ÷ combined area of two
+rectangles: 0.0 is no overlap, 1.0 is pixel-perfect. A prediction counts as
+correct at **IoU ≥ 0.3**, which the paper calls a clinically meaningful
+minimum — enough to point a radiologist at the right region. Matching is
+one-to-one, highest IoU first, so a single lucky rectangle cannot claim
+several ground-truth boxes. **mIoU** averages only the successful matches, so
+it answers a separate question: when the model does find a lesion, how tightly
+does it box it?
+
+### Check the scorer before trusting a model number
+
+```bash
+python -m vindr_cxr_vqa.evaluate --oracle --split val   # no GPU needed
+```
+
+This replays the answer key as if it were the model's output. It must give
+VQA precision **1.000** and localization **100%** at IoU ≥ 0.5 — if it does
+not, the grader is broken, not the model. (Recall is ~0.29 there, correctly:
+the dataset only asks about ~4 of the ~8.3 lesions per image, which also caps
+box recall at ~0.48 for any model.)
+
+### If the box numbers are all zero
+
+The scorer prints what share of predictions contained a `<loc_…>` span. At
+**0.0%** the model emitted no rectangles at all, so Tables 5 and 6 are
+*vacuous rather than poor* — a formatting failure, not a localization one. A
+zero-shot model usually lands there; learning the `<loc_…>` convention is part
+of what fine-tuning does.
 
 ---
 
