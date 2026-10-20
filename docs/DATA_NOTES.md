@@ -1,214 +1,226 @@
-# What the released data actually contains
+# Dữ liệu phát hành thực sự chứa gì
 
-Everything here is reproducible with:
+Xem thêm: [PIPELINE.md](PIPELINE.md) — vết của một bản ghi qua toàn bộ pipeline ·
+[EVALUATION.md](EVALUATION.md) — các độ đo giải thích từ đầu
+
+Mọi con số dưới đây đều tái lập được bằng:
 
 ```bash
-python -m vindr_cxr_vqa.build_dataset     # writes data/processed/
-python -m vindr_cxr_vqa.stats             # writes outputs/dataset_report.md
+python -m vindr_cxr_vqa.build_dataset     # ghi ra data/processed/
+python -m vindr_cxr_vqa.stats             # ghi ra outputs/dataset_report.md
 ```
 
-`outputs/dataset_report.md` is the machine-generated version of this page: it
-recomputes every statistic from `data/processed/*.jsonl` and marks each one
-`match` or `MISMATCH` against the paper. **25 of 30 checks match.** This page
-explains the five that do not, and what the repo does about them.
+`outputs/dataset_report.md` là bản do máy sinh ra của chính trang này: nó tính
+lại mọi thống kê từ `data/processed/*.jsonl` và đánh dấu từng mục `match` hay
+`MISMATCH` so với paper. **25 trên 30 mục khớp.** Trang này giải thích 5 mục
+không khớp, và repo xử lý chúng ra sao.
 
 ---
 
-## What matches
+## Những gì khớp
 
-| Claim (paper / dataset card) | Rebuilt |
+| Paper / dataset card công bố | Dựng lại được |
 | --- | --- |
-| 4,394 images, 17,597 QA pairs | exact |
-| 4.0 QA pairs per image | exact |
-| 14 pathology classes | exact |
-| 6 question types, balanced 16.4–17.0% | exact (16.4–17.0%) |
-| Per-class prevalence, Cardiomegaly 28.0% → Atelectasis 0.1% | all 14 within 0.1pp |
-| Split 3,735 / 659 / 300 images | exact |
-| ~8.3 ground-truth boxes per validation image | 8.44 |
-| Every `image_id` resolves to a local VinDr-CXR PNG | 4,394 / 4,394 |
+| 4.394 ảnh, 17.597 QA pair | khớp tuyệt đối |
+| 4,0 QA pair mỗi ảnh | khớp tuyệt đối |
+| 14 lớp bệnh lý | khớp tuyệt đối |
+| 6 loại câu hỏi, cân bằng 16,4–17,0% | khớp (16,4–17,0%) |
+| Tỉ lệ từng lớp, Cardiomegaly 28,0% → Atelectasis 0,1% | cả 14 lớp lệch ≤ 0,1 điểm % |
+| Chia 3.735 / 659 / 300 ảnh | khớp tuyệt đối |
+| ~8,3 box ground truth mỗi ảnh validation | 8,44 |
+| Mọi `image_id` đều tìm được file PNG tương ứng | 4.394 / 4.394 |
 
-The 5,471 validation ground-truth boxes of Section 3.2 come out as 5,561 here.
-The paper does not publish its split seed, so an exact match is not expected;
-the 1.6% gap is split noise, and it confirms the boxes being counted are the
-**raw** per-radiologist readings rather than fused consensus boxes.
+Con số 5.471 box ground truth của Mục 3.2 ở đây ra **5.561**. Paper không công
+bố seed chia tập nên không thể khớp tuyệt đối; chênh 1,6% là nhiễu do chia
+ngẫu nhiên, và nó xác nhận số box được đếm là box **thô** của từng bác sĩ chứ
+không phải box đồng thuận đã gộp.
+
+> **Lưu ý về nguồn ảnh.** Repo HuggingFace `Dangindev/VinDR-CXR-VQA` chỉ có 3
+> file — `.gitattributes`, `README.md`, `data_v1.json` — **không có tấm ảnh
+> nào**. Ảnh phải lấy từ bản VinDr-CXR trên máy bạn. Đã kiểm chứng: toàn bộ
+> 4.394 ảnh và 17.597 QA pair của HF đều map được, 0 mẫu rớt, 0 file PNG
+> thiếu. Trong 18.000 ảnh local thì 13.606 ảnh **không được dùng** — paper chỉ
+> chọn ảnh có ít nhất một tổn thương được khoanh.
 
 ---
 
-## Discrepancy 1 — `gt_location` usually belongs to a different pathology
+## Sai lệch 1 — `gt_location` thường thuộc về một bệnh lý khác
 
-**The most consequential finding.** Section 2.2 states that cross-validating
-all 4,394 images against VinDr-CXR "confirmed zero mismatches […] ensuring
-100% preservation of expert annotations".
+**Đây là phát hiện nghiêm trọng nhất.** Mục 2.2 khẳng định việc đối chiếu chéo
+toàn bộ 4.394 ảnh với VinDr-CXR "xác nhận không có sai khác nào […] đảm bảo
+bảo toàn 100% chú thích của chuyên gia".
 
-Rebuilding the join gives a different picture:
+Dựng lại mối nối cho ra bức tranh khác:
 
-| | QA pairs | share |
+| | QA pair | Tỉ lệ |
 | --- | --- | --- |
-| `gt_location` is a radiologist box **of `gt_finding`** | 7,043 | **40.0%** |
-| `gt_location` is a radiologist box **of another pathology** | 10,530 | **59.8%** |
-| `gt_location` matches no radiologist box at all | 24 | 0.1% |
+| `gt_location` là box của **đúng** `gt_finding` | 7.043 | **40,0%** |
+| `gt_location` là box của **bệnh lý khác** | 10.530 | **59,8%** |
+| `gt_location` không khớp box nào | 24 | 0,1% |
 
-So the boxes themselves are genuine — 99.9% of them are real VinDr annotations
-on the right image — but in three cases out of five the box is paired with the
-wrong label. The most frequent confusions:
+Bản thân các box đều **thật** — 99,9% là chú thích VinDr có thật trên đúng ảnh
+đó — nhưng cứ ba lần thì hai lần box bị ghép với **sai nhãn**. Các cặp nhầm
+phổ biến nhất:
 
-| `gt_finding` says | the box is actually | count |
+| `gt_finding` ghi là | box thực tế là | Số lượng |
 | --- | --- | --- |
-| Cardiomegaly | Aortic enlargement | 1,906 |
+| Cardiomegaly | Aortic enlargement | 1.906 |
 | Cardiomegaly | Pleural thickening | 398 |
 | Other lesion | Aortic enlargement | 353 |
 | Lung Opacity | Aortic enlargement | 352 |
 | Pulmonary fibrosis | Pleural thickening | 351 |
 
-The pattern is consistent with the generation pipeline having drawn the finding
-list and the box list for an image independently instead of joining them.
+Dạng lỗi này khớp với giả thuyết: pipeline sinh dữ liệu đã lấy danh sách bệnh
+lý và danh sách box của một ảnh **một cách độc lập** thay vì nối chúng lại.
 
-A worked example — image `9a5094b2563a1ef3ff50dc5c7ff71345`, whose three QA
-pairs all carry `<loc_691_1375_1653_1831>`:
+Ví dụ cụ thể — ảnh `9a5094b2563a1ef3ff50dc5c7ff71345`, cả ba QA pair đều mang
+`<loc_691_1375_1653_1831>`:
 
 ```
-R10  Cardiomegaly         691 1376 1654 1832   <- the published box, correct here
+R10  Cardiomegaly         691 1376 1654 1832   <- box được công bố, ở đây ĐÚNG
 R8   Cardiomegaly         689 1313 1667 1763
 R9   Cardiomegaly         693 1376 1657 1800
 R9   Aortic enlargement  1052  715 1299  967
 R9   Pleural effusion    1789 1729 1875 1992
 ```
 
-and the failing case `051132a778e61a86eb147c7c6f564dfe`, where
-`gt_finding = "Cardiomegaly"` but `gt_location = <loc_1264_743_1611_1019>` is
-that image's **Aortic enlargement** box.
+Và ca **sai** — ảnh `051132a778e61a86eb147c7c6f564dfe`, `gt_finding` ghi
+"Cardiomegaly" nhưng `gt_location = <loc_1264_743_1611_1019>` chính là box
+**Aortic enlargement** của ảnh đó (IoU 0,99), trong khi IoU với cả ba box
+Cardiomegaly thật đều bằng **0,00**.
 
-**Why the paper's own metrics cannot see this.** Section 3.2 scores a
-prediction as a true positive when it overlaps *any* ground-truth box with
-IoU ≥ 0.3 — the match is class-agnostic. A box on the aorta labelled
-"Cardiomegaly" still overlaps a real lesion, so it scores as correct. The
-mismatch costs nothing at evaluation time; it costs at **training** time, where
-it teaches the model to point at the wrong organ for 60% of the supervision.
+### Vì sao chính các độ đo của paper không phát hiện được
 
-**What this repo does.** Every record carries both, so nothing is lost:
+Mục 3.2 tính một dự đoán là đúng khi nó chồng lên **bất kỳ** box ground truth
+nào với IoU ≥ 0,3 — tức là **không phân biệt lớp bệnh**. Một hình chữ nhật vẽ
+trên động mạch chủ nhưng gán nhãn "Cardiomegaly" vẫn chồng lên một tổn thương
+có thật, nên vẫn được tính đúng. Sai lệch này **không tốn gì lúc đánh giá**;
+nó tốn lúc **huấn luyện**, nơi nó dạy mô hình chỉ sai cơ quan ở 60% số mẫu
+giám sát.
 
-| field | meaning |
+### Repo này xử lý thế nào
+
+Mỗi bản ghi mang **cả hai**, nên không mất gì:
+
+| Trường | Ý nghĩa |
 | --- | --- |
-| `gt_location`, `bbox_orig` | the published box, byte-for-byte |
-| `box_label_consistent` | whether the published box belongs to `gt_finding` |
-| `gt_location_fixed`, `bbox_fixed_orig` | the consensus box that *does* belong to `gt_finding` |
+| `gt_location`, `bbox_orig` | box được công bố, nguyên xi |
+| `box_label_consistent` | box công bố có đúng là của `gt_finding` không |
+| `gt_location_fixed`, `bbox_fixed_orig` | box đồng thuận **thực sự** thuộc `gt_finding` |
 | `repair_method` | `published` / `best_iou` / `consensus` / `unavailable` |
 
-`data.box_source` in `configs/default.yaml` selects which one supervises
-training. It defaults to `fixed`. Set it to `published` to reproduce the
-paper's exact setup.
+`data.box_source` trong `configs/default.yaml` chọn dùng cái nào để huấn
+luyện. Mặc định là `fixed`. Đặt `published` để tái lập đúng thiết lập của
+paper.
 
-The repair fuses the two or three independent radiologist readings of each
-lesion (greedy IoU clustering at 0.3, then averaging) and picks the consensus
-box of the right class — the one overlapping the published box where there is
-one, otherwise the most strongly agreed-on box of that class.
+Cách sửa: gộp hai hoặc ba lần đọc độc lập của các bác sĩ cho cùng một tổn
+thương (phân cụm tham lam theo IoU ở ngưỡng 0,3, rồi lấy trung bình) và chọn
+box đồng thuận của đúng lớp — ưu tiên box chồng lên box công bố nếu có, nếu
+không thì lấy box được đồng thuận cao nhất của lớp đó.
 
 ---
 
-## Discrepancy 2 — the clinical reasoning is ~18 words, not 150–250
+## Sai lệch 2 — phần lập luận dài ~18 từ, không phải 150–250
 
-Table 2 and the dataset card both specify a "detailed clinical reasoning
-paragraph (150–250 words)". The released `reason` field:
+Bảng 2 và dataset card đều ghi "đoạn lập luận lâm sàng chi tiết (150–250 từ)".
+Trường `reason` thực tế:
 
-| | words |
+| | Số từ |
 | --- | --- |
-| minimum | 4 |
-| median | 20 |
-| mean | 17.8 |
-| maximum | 40 |
-| **pairs in the claimed 150–250 range** | **0 of 17,597** |
+| nhỏ nhất | 4 |
+| trung vị | 20 |
+| trung bình | 17,8 |
+| lớn nhất | 40 |
+| **số mẫu nằm trong khoảng 150–250 từ** | **0 / 17.597** |
 
-A typical value is one sentence:
+Một giá trị điển hình chỉ là một câu:
 
 > "Cardiomegaly is a nonspecific finding often indicative of chronic cardiac
 > stress, such as chronic hypertension, valvular disease, or cardiomyopathy."
 
-and the shortest degenerate to `"Visible at specified location."`.
+Và ngắn nhất thì suy biến thành `"Visible at specified location."`.
 
-The field is still useful supervision for explainability, just far shorter than
-documented. `data.include_reason` (default `true`) appends it to the training
-target; the short length is why `data.max_seq_length` of 1024 is comfortable.
-
----
-
-## Discrepancy 3 — there are no negative samples
-
-The abstract reports "a balanced distribution of 41.7% positive and 58.3%
-negative samples, mitigating hallucinations in normal cases".
-
-In `data_v1.json`:
-
-- every one of the 17,597 QA pairs carries a non-empty `gt_finding` **and** a
-  non-empty `gt_location`;
-- no pair has `gt_finding = "No finding"`;
-- no answer begins with "No";
-- only 32 answers contain a negation word anywhere.
-
-All 4,394 images were selected as "containing at least one expert-annotated
-pathology finding" (Section 2.1), so there is no normal-case subset to draw
-negatives from. The released file is 100% positive.
-
-**Consequence.** A model fine-tuned on this data never sees an example of
-declining to report a finding, which is the behaviour the balance was meant to
-instil. Expect the high recall / low precision profile the paper reports
-(recall 0.926, precision 0.471 after fine-tuning). Building genuine negatives
-would mean pulling in the ~10,600 VinDr train images with no finding, which is
-out of scope here — `vindr.load_images` already exposes them if you want to.
+Trường này vẫn hữu ích làm giám sát cho tính giải thích được, chỉ là ngắn hơn
+nhiều so với công bố. `data.include_reason` (mặc định `true`) nối nó vào chuỗi
+đích; chính vì nó ngắn nên `data.max_seq_length` 1024 là thoải mái.
 
 ---
 
-## Discrepancy 4 — multi-lesion complexity
+## Sai lệch 3 — không có mẫu âm tính nào
 
-Table 3 reports "54.8% [of validation images] with ≥2 pathologies". Recomputed
-over the release, **92.7%** of validation images carry boxes from two or more
-distinct pathologies, and the figure is 93.0% across all 4,394 images.
+Phần tóm tắt của paper nêu "phân bố cân bằng 41,7% mẫu dương và 58,3% mẫu âm,
+giúp giảm ảo giác ở các ca bình thường".
 
-The companion number in the same row — 8.3 boxes per validation image —
-reproduces cleanly at 8.44, so the box counts are right and only the ≥2
-percentage is off. No definition of "pathology" we tried recovers 54.8%.
+Trong `data_v1.json`:
 
-This matters for how Section 4's conclusion should be read: the low box recall
-(0.090) is attributed there to "the lack of multi-lesion training examples",
-but training images are just as lesion-dense as validation images. The more
-likely cause is that each image gets ~4 QA pairs and therefore at most ~4
-supervised boxes, against ~8.4 ground-truth boxes at evaluation — a ceiling of
-roughly 0.48 on recall before the model makes a single error.
+- cả 17.597 QA pair đều có `gt_finding` **và** `gt_location` không rỗng;
+- không mẫu nào có `gt_finding = "No finding"`;
+- không câu trả lời nào bắt đầu bằng "No";
+- chỉ 32 câu trả lời chứa từ phủ định ở bất kỳ đâu.
 
----
+Cả 4.394 ảnh đều được chọn vì "chứa ít nhất một tổn thương được chuyên gia
+khoanh" (Mục 2.1), nên không có tập ảnh bình thường nào để rút mẫu âm. File
+phát hành **100% là mẫu dương**.
 
-## Discrepancy 5 — the training set is larger than the dataset
-
-Section 3.1 states that training runs "for 3 epochs over the **20,880-sample**
-training set".
-
-The entire release contains 17,597 QA pairs. An 85% training split of that is
-**14,960** — what this repo builds. 20,880 is not merely a different split
-ratio; it exceeds the total number of samples that exist.
-
-Three readings are possible and the paper does not distinguish them: the
-training set was augmented (nothing in the text says so), a larger internal
-version of the dataset was used and a subset released, or the number is simply
-wrong. It matters because it sets the step budget: at an effective batch of 16,
-3 epochs is 3,915 steps under the paper's figure but 2,805 under the released
-data. `scripts/reproduce.py` and the Kaggle notebook use the released data, so
-`--max-steps -1` means 2,805 steps.
+**Hệ quả.** Mô hình fine-tune trên dữ liệu này **không bao giờ thấy ví dụ về
+việc từ chối báo một tổn thương** — đúng cái hành vi mà sự cân bằng kia định
+tạo ra. Hãy chờ đợi đúng dạng recall cao / precision thấp mà paper báo (recall
+0,926, precision 0,471 sau fine-tune). Muốn tạo mẫu âm thật thì phải kéo thêm
+~10.600 ảnh VinDr không có tổn thương — nằm ngoài phạm vi repo này, nhưng
+`vindr.load_images` đã sẵn sàng cho bạn truy cập chúng.
 
 ---
 
-## Coordinate spaces
+## Sai lệch 4 — độ phức tạp đa tổn thương
 
-`gt_location` is in **original DICOM pixel space**, while the PNGs in
-`dataset/train_data/train/` are pre-resized to 224×224. Mixing the two silently
-produces boxes in the wrong place, so every record carries all three spaces
-explicitly:
+Bảng 3 ghi "54,8% [số ảnh validation] có ≥2 bệnh lý". Tính lại trên bản phát
+hành, **92,7%** số ảnh validation mang box của hai lớp bệnh lý khác nhau trở
+lên, và con số trên toàn bộ 4.394 ảnh là 93,0%.
 
-| field | space |
+Con số đi kèm trong cùng dòng đó — 8,3 box mỗi ảnh validation — tái lập sạch
+ở mức 8,44, nên số lượng box là đúng và chỉ riêng tỉ lệ ≥2 là sai. Chúng tôi
+không tìm được định nghĩa "bệnh lý" nào cho ra 54,8%.
+
+Điều này ảnh hưởng tới cách đọc kết luận ở Mục 4: recall box thấp (0,090) được
+paper quy cho "thiếu ví dụ huấn luyện đa tổn thương", nhưng ảnh huấn luyện dày
+đặc tổn thương **y hệt** ảnh validation. Nguyên nhân khả dĩ hơn: mỗi ảnh chỉ
+có ~4 QA pair nên nhiều nhất ~4 box được giám sát, trong khi lúc đánh giá có
+~8,4 box ground truth — tức recall đã bị chặn trần ở khoảng 0,48 trước khi mô
+hình phạm bất kỳ lỗi nào.
+
+---
+
+## Sai lệch 5 — tập huấn luyện lớn hơn cả dataset
+
+Mục 3.1 ghi huấn luyện "3 epoch trên tập huấn luyện **20.880 mẫu**".
+
+Toàn bộ bản phát hành chỉ có 17.597 QA pair. Lấy 85% làm tập huấn luyện thì
+được **14.960** — đúng con số repo này dựng ra. 20.880 không đơn thuần là một
+tỉ lệ chia khác; nó **vượt quá tổng số mẫu tồn tại**.
+
+Có ba cách giải thích và paper không phân định: tập huấn luyện đã được tăng
+cường (văn bản không nói gì), một phiên bản nội bộ lớn hơn đã được dùng rồi
+chỉ phát hành một phần, hoặc con số đơn giản là sai. Điều này quan trọng vì nó
+quyết định ngân sách bước: với batch hiệu dụng 16, 3 epoch là 3.915 bước theo
+con số của paper nhưng chỉ 2.805 bước theo dữ liệu thực. `scripts/reproduce.py`
+và notebook Kaggle dùng dữ liệu thực, nên `--max-steps -1` nghĩa là 2.805 bước.
+
+---
+
+## Các hệ toạ độ
+
+`gt_location` nằm trong **hệ pixel DICOM gốc**, trong khi các file PNG ở
+`dataset/train_data/train/` đã được resize sẵn về 224×224. Trộn hai hệ sẽ tạo
+ra box sai vị trí mà **không có lỗi nào báo ra**, nên mỗi bản ghi mang sẵn cả
+ba hệ một cách tường minh:
+
+| Trường | Hệ toạ độ |
 | --- | --- |
-| `bbox_orig` | original DICOM pixels (what `gt_location` encodes) |
-| `bbox_resized` | 224×224, via `resize_factors.csv` |
-| `bbox_norm` / `loc_norm` | normalised integers 0–999 |
+| `bbox_orig` | pixel DICOM gốc (chính là thứ `gt_location` mã hoá) |
+| `bbox_resized` | 224×224, quy đổi qua `resize_factors.csv` |
+| `bbox_norm` / `loc_norm` | số nguyên chuẩn hoá 0–999 |
 
-Training uses the normalised space by default (`data.loc_format: norm1000`):
-it is resolution-independent, and its fixed three-digit width is what lets the
-soft-IoU loss locate the coordinate digit tokens. `evaluate.py` converts
-predictions back to original pixels before computing any IoU.
+Huấn luyện mặc định dùng hệ chuẩn hoá (`data.loc_format: norm1000`): nó độc
+lập với độ phân giải, và độ rộng cố định 3 chữ số là thứ cho phép hàm mất mát
+soft-IoU định vị được các token chữ số. `evaluate.py` quy đổi dự đoán ngược về
+pixel gốc trước khi tính bất kỳ IoU nào.

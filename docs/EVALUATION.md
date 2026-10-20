@@ -1,35 +1,35 @@
-# How evaluation works, from scratch
+# Đánh giá hoạt động thế nào — giải thích từ đầu
 
-*(Tiếng Việt: [EVALUATION.vi.md](EVALUATION.vi.md))*
+Viết cho người **chưa từng làm computer vision**. Tài liệu giải thích: mô hình
+được hỏi gì, nó trả lời ra sao, những con số nào được tính từ câu trả lời đó,
+và đọc chúng thế nào. Mọi ví dụ đều là bản ghi thật trong dataset này.
 
-Written for someone who has never done computer vision. It explains what the
-model is asked, what it answers, which numbers are computed from those
-answers, and how to read them. Every example is a real record from this
-dataset.
+Xem thêm: [PIPELINE.md](PIPELINE.md) — vết của một bản ghi qua toàn bộ pipeline ·
+[DATA_NOTES.md](DATA_NOTES.md) — dữ liệu phát hành thực sự chứa gì
 
 ---
 
-## 1. Five terms, once
+## 1. Năm thuật ngữ, nói một lần
 
-| Term | Meaning here |
+| Thuật ngữ | Ở đây nghĩa là |
 | --- | --- |
-| **Chest X-ray** | One greyscale image. 4,394 of them. |
-| **Finding / pathology** | An abnormality a radiologist saw, e.g. *Cardiomegaly* (enlarged heart). 14 possible kinds. |
-| **Bounding box** | A rectangle around where the finding is, written `<loc_xmin_ymin_xmax_ymax>`. |
-| **Ground truth** | What the radiologist actually drew and labelled. The answer key. |
-| **Prediction** | What the model wrote. What we grade. |
+| **Ảnh X-quang ngực** | Một ảnh xám. Có 4.394 ảnh. |
+| **Tổn thương / bệnh lý** | Bất thường mà bác sĩ nhìn thấy, vd *Cardiomegaly* (tim to). Có 14 loại. |
+| **Bounding box** | Hình chữ nhật khoanh vùng tổn thương, viết dạng `<loc_xmin_ymin_xmax_ymax>`. |
+| **Ground truth** | Thứ bác sĩ thực sự vẽ và gán nhãn. Đây là **đáp án**. |
+| **Prediction** | Thứ mô hình viết ra. Đây là **bài làm** cần chấm. |
 
-The model does **two jobs at once**: say *what* it sees (text) and say *where*
-it is (a rectangle). The three tables grade those separately.
+Mô hình làm **hai việc cùng lúc**: nói *thấy gì* (văn bản) và nói *ở đâu* (hình
+chữ nhật). Ba bảng kết quả chấm hai việc đó riêng biệt.
 
 ---
 
-## 2. What the model is asked
+## 2. Mô hình được hỏi gì
 
-Each image gets 3–5 questions, drawn from six types. Real examples from
+Mỗi ảnh có 3–5 câu hỏi, thuộc sáu loại. Ví dụ thật lấy từ
 `data/processed/val.jsonl`:
 
-| Type | Question | Reference answer |
+| Loại | Câu hỏi | Đáp án tham chiếu |
 | --- | --- | --- |
 | `Yes_No` | Is there Pulmonary fibrosis? | Yes, Pulmonary fibrosis `<loc_1024_681_1362_969>` |
 | `Is_there` | Does this X-ray show Lung Opacity? | Yes, Lung Opacity is listed as a primary finding… `<loc_1309_816_1658_1138>` |
@@ -38,44 +38,44 @@ Each image gets 3–5 questions, drawn from six types. Real examples from
 | `How_many` | How many findings are there? | Pulmonary fibrosis `<loc_1024_681_1362_969>` |
 | `Which` | Which side shows the abnormality? | …localized to the patient's left side `<loc_1309_816_1658_1138>` |
 
-### The surprising part
+### Điểm bất ngờ
 
-**The metrics do not grade whether a Yes/No question got "yes" or "no" right.**
+**Các độ đo KHÔNG chấm xem câu Yes/No có trả lời "yes" hay "no" đúng không.**
 
-Two reasons. First, there are no negative samples — every question in the
-release is about a finding that is genuinely present, so the correct answer to
-every `Yes_No` and `Is_there` question is "yes". A model that always says
-"yes" would score 100% on that, which measures nothing.
+Hai lý do. Thứ nhất, **dataset không có mẫu âm tính** — mọi câu hỏi trong bản
+phát hành đều hỏi về một tổn thương thực sự có mặt, nên đáp án đúng của mọi câu
+`Yes_No` và `Is_there` đều là "yes". Một mô hình cứ trả lời "yes" sẽ đạt 100%,
+tức là đo được **con số không**.
 
-Second, the reference answers themselves do not respect their question type.
-Look at the `How_many` row above: the question asks for a count and the answer
-names one pathology instead. The `What` row begins with "Yes,". Grading
-against those strings literally would measure the generation pipeline's
-inconsistency, not the model.
+Thứ hai, chính các đáp án tham chiếu cũng không tôn trọng loại câu hỏi của
+mình. Nhìn dòng `How_many` ở trên: câu hỏi đòi một con số, đáp án lại nêu tên
+một bệnh lý. Dòng `What` thì bắt đầu bằng "Yes,". Chấm khớp chuỗi với những
+đáp án đó chỉ đo được sự thiếu nhất quán của pipeline sinh dữ liệu, không đo
+được mô hình.
 
-So the evaluation ignores question type and asks two questions per **image**:
+Vì vậy, việc đánh giá **bỏ qua loại câu hỏi** và hỏi hai điều trên mỗi **ảnh**:
 
-1. **Which pathologies did the model mention, anywhere in its answers?**
-   → Table 4
-2. **Where did it put its rectangles?** → Tables 5 and 6
+1. **Mô hình nhắc tới những bệnh lý nào, ở bất kỳ đâu trong các câu trả lời?**
+   → Bảng 4
+2. **Nó đặt hình chữ nhật ở đâu?** → Bảng 5 và 6
 
 ---
 
-## 3. The three steps
+## 3. Ba bước
 
 ```
-step 1  infer      model + images  ->  preds_val_base.jsonl
-step 2  evaluate   predictions     ->  eval_val_base.json   (the three tables)
-step 3  results    two eval files  ->  results_val.md       (side by side)
+bước 1  infer      mô hình + ảnh   ->  preds_val_base.jsonl
+bước 2  evaluate   prediction      ->  eval_val_base.json   (ba bảng)
+bước 3  results    hai file eval   ->  results_val.md       (đặt cạnh nhau)
 ```
 
-### Step 1 — generate predictions
+### Bước 1 — sinh prediction
 
 ```bash
 python -m vindr_cxr_vqa.infer --split val --out outputs/preds_val_base.jsonl
 ```
 
-Reads each image, asks each question, writes what the model said:
+Đọc từng ảnh, hỏi từng câu, ghi lại mô hình nói gì:
 
 ```json
 {"sample_id": "0005e8e3..._0", "image_id": "0005e8e3...",
@@ -83,16 +83,17 @@ Reads each image, asks each question, writes what the model said:
  "prediction": "The lung opacity is in the right upper zone <loc_706_332_816_411>."}
 ```
 
-Run it twice: once with no adapter (the **Pretrained** row, the model as
-downloaded) and once with `--adapter` (the **Fine-tuned** row).
+Chạy **hai lần**: một lần không có adapter (dòng **Pretrained** — mô hình gốc
+vừa tải về) và một lần có `--adapter` (dòng **Fine-tuned** — sau khi huấn
+luyện).
 
-### Step 2 — score them
+### Bước 2 — chấm điểm
 
 ```bash
 python -m vindr_cxr_vqa.evaluate --pred outputs/preds_val_base.jsonl --split val
 ```
 
-### Step 3 — put the two side by side
+### Bước 3 — đặt hai kết quả cạnh nhau
 
 ```bash
 python -m vindr_cxr_vqa.results --base outputs/eval_val_base.json \
@@ -101,278 +102,279 @@ python -m vindr_cxr_vqa.results --base outputs/eval_val_base.json \
 
 ---
 
-## 4. Table 4 — did it name the right pathologies?
+## 4. Bảng 4 — gọi đúng tên bệnh lý không?
 
-### The question being asked
+### Câu hỏi thực sự được đặt ra
 
-For one image, compare two sets of pathology names:
+Với một ảnh, so sánh **hai tập tên bệnh lý**:
 
-- **Truth**: what radiologists boxed on that image.
-- **Prediction**: which pathology names appear in the model's answers.
+- **Đáp án**: những gì bác sĩ đã khoanh trên ảnh đó.
+- **Bài làm**: những tên bệnh lý xuất hiện trong câu trả lời của mô hình.
 
-Real image `9a5094b2563a1ef3ff50dc5c7ff71345` has four: *Aortic enlargement,
-Cardiomegaly, Pleural effusion, Pleural thickening*.
+Ảnh thật `9a5094b2563a1ef3ff50dc5c7ff71345` có bốn tổn thương: *Aortic
+enlargement, Cardiomegaly, Pleural effusion, Pleural thickening*.
 
-Suppose the model's answers mention *Cardiomegaly, Pleural effusion,
-Pneumothorax*. Lay the 14 possible pathologies side by side:
+Giả sử mô hình nhắc tới *Cardiomegaly, Pleural effusion, Pneumothorax*. Đặt 14
+bệnh lý cạnh nhau:
 
-| Pathology | In truth? | Model said? | Verdict |
+| Bệnh lý | Có thật? | Mô hình nói? | Kết luận |
 | --- | --- | --- | --- |
-| Cardiomegaly | yes | yes | **TP** — true positive, correctly found |
-| Pleural effusion | yes | yes | **TP** |
-| Aortic enlargement | yes | no | **FN** — false negative, missed it |
-| Pleural thickening | yes | no | **FN** |
-| Pneumothorax | no | yes | **FP** — false positive, invented it |
-| the other 9 | no | no | **TN** — true negative, correctly silent |
+| Cardiomegaly | có | có | **TP** — true positive, tìm đúng |
+| Pleural effusion | có | có | **TP** |
+| Aortic enlargement | có | không | **FN** — false negative, **bỏ sót** |
+| Pleural thickening | có | không | **FN** |
+| Pneumothorax | không | có | **FP** — false positive, **bịa ra** |
+| 9 cái còn lại | không | không | **TN** — true negative, im lặng đúng |
 
-Every image contributes 14 such verdicts. They are summed over all 659
-validation images, then:
+Mỗi ảnh đóng góp 14 kết luận như vậy. Cộng dồn trên cả 659 ảnh validation, rồi:
 
-### The three numbers
+### Ba con số
 
-**Precision — when it speaks up, how often is it right?**
+**Precision (độ chính xác) — khi mô hình lên tiếng, bao nhiêu lần nó đúng?**
 
 ```
             TP              2
-P  =  ───────────  =  ─────────  =  0.67
+P  =  ───────────  =  ─────────  =  0,67
          TP + FP        2 + 1
 ```
-Out of 3 pathologies claimed, 2 were real. Low precision = the model
-hallucinates findings.
+Nêu ra 3 bệnh lý thì 2 cái có thật. Precision thấp = **mô hình bịa bệnh**.
 
-**Recall — of what was really there, how much did it catch?**
+**Recall (độ bao phủ) — trong những gì thực sự có, nó bắt được bao nhiêu?**
 
 ```
             TP              2
-R  =  ───────────  =  ─────────  =  0.50
+R  =  ───────────  =  ─────────  =  0,50
          TP + FN        2 + 2
 ```
-Out of 4 real pathologies, it found 2. Low recall = the model misses disease.
+Có 4 bệnh lý thật thì tìm được 2. Recall thấp = **mô hình bỏ sót bệnh**.
 
-**F1 — one number balancing both.**
+**F1 — một con số cân bằng cả hai.**
 
 ```
-          2 · P · R        2 · 0.67 · 0.50
-F1  =  ───────────────  =  ───────────────  =  0.57
-           P + R             0.67 + 0.50
+          2 · P · R        2 · 0,67 · 0,50
+F1  =  ───────────────  =  ───────────────  =  0,57
+           P + R             0,67 + 0,50
 ```
 
-F1 is the *harmonic* mean, not the average. That matters: it punishes
-lopsidedness. A model with P=1.00 and R=0.02 averages 0.51 but has F1 = 0.04,
-which is the honest verdict — a model that finds 2% of disease is useless
-however careful it is when it does speak.
+F1 là trung bình **điều hoà**, không phải trung bình cộng. Điều đó quan trọng:
+nó trừng phạt sự lệch lạc. Mô hình có P = 1,00 và R = 0,02 thì trung bình cộng
+là 0,51, nhưng F1 = 0,04 — và đó mới là đánh giá trung thực: một mô hình chỉ
+tìm ra 2% bệnh thì vô dụng, dù khi nó lên tiếng có cẩn thận đến đâu.
 
-**This is the paper's headline number**: F1 0.558 → 0.624 after fine-tuning.
+**Đây là con số chính của paper**: F1 từ 0,558 lên 0,624 sau khi fine-tune.
 
-### Why Accuracy is listed but not trusted
+### Vì sao Accuracy được in ra nhưng không đáng tin
 
 ```
              TP + TN            2 + 9
-Acc  =  ─────────────────  =  ─────────  =  0.79
+Acc  =  ─────────────────  =  ─────────  =  0,79
          TP + TN + FP + FN       14
 ```
 
-79% sounds good, but it is inflated by the 9 **TN** — pathologies that were
-absent and went unmentioned. A validation image carries only **3.59** of the
-14 on average, so **a model that says nothing at all still scores 0.743**.
+79% nghe có vẻ tốt, nhưng nó bị thổi phồng bởi 9 **TN** — những bệnh lý không
+có mặt và mô hình cũng không nhắc tới. Trung bình mỗi ảnh validation chỉ có
+**3,59** trong số 14 bệnh lý, nên **một mô hình không nói gì cả vẫn đạt
+accuracy 0,743**.
 
-Accuracy rewards silence; precision and recall do not. That is why F1 is the
-number to read.
+Accuracy thưởng cho sự im lặng; precision và recall thì không. Đó là lý do
+**F1 mới là con số cần đọc**.
 
-> **A note on the paper's Table 4.** It prints the same value in its Accuracy
-> and F1 columns (0.558 twice, then 0.624 twice). Those are different
-> quantities and are not equal in general — and the printed F1 is exactly
-> `2PR/(P+R)` of the printed precision and recall. The Accuracy column looks
-> like a duplicate of F1. This repo reports both: `f1` is the comparable
-> number, `accuracy` is the genuine `(TP+TN)/total`.
+> **Lưu ý về Bảng 4 trong paper.** Paper in **cùng một giá trị** ở cột Accuracy
+> và cột F1 (0,558 hai lần, rồi 0,624 hai lần). Đây là hai đại lượng khác nhau
+> và nói chung không bằng nhau — hơn nữa F1 in ra đúng bằng `2PR/(P+R)` của
+> precision và recall in ra. Nhiều khả năng cột Accuracy chỉ là bản sao của F1.
+> Repo này báo cả hai: `f1` là con số để so sánh, `accuracy` là
+> `(TP+TN)/tổng` thật.
 
-### How "did it mention Cardiomegaly?" is decided
+### "Có nhắc tới Cardiomegaly không?" được quyết định thế nào
 
-Plain text search over the answer, with a negation guard
-(`evaluate.py:mentioned`). Each pathology has surface forms — *Cardiomegaly*
-also matches "enlarged heart", "cardiac enlargement". Then:
+Tìm chuỗi văn bản, có **xử lý phủ định** (`evaluate.py:mentioned`). Mỗi bệnh lý
+có nhiều cách diễn đạt — *Cardiomegaly* còn khớp với "enlarged heart", "cardiac
+enlargement". Sau đó:
 
 ```
-"There is cardiomegaly."              ->  counts as mentioned
-"There is no pleural effusion."       ->  does NOT count
+"There is cardiomegaly."              ->  TÍNH là có nhắc
+"There is no pleural effusion."       ->  KHÔNG tính
 "No pneumothorax. Cardiomegaly is present."
-                                      ->  Cardiomegaly counts, Pneumothorax does not
+                                      ->  Cardiomegaly tính, Pneumothorax không
 ```
 
-The negation only reaches back to the nearest clause boundary, so the third
-example is handled correctly.
+Phủ định chỉ có hiệu lực lùi về tới ranh giới mệnh đề gần nhất, nên ví dụ thứ
+ba được xử lý đúng.
 
 ---
 
-## 5. Table 5 — did it put the box in the right place?
+## 5. Bảng 5 — đặt box đúng chỗ không?
 
-### IoU, the one idea you need
+### IoU — ý tưởng duy nhất bạn cần hiểu
 
-**Intersection over Union** measures rectangle overlap. Overlap area divided
-by combined area:
+**Intersection over Union** đo độ chồng lấp của hai hình chữ nhật. Bằng diện
+tích phần giao chia cho diện tích phần hợp:
 
 ```
-   ┌─────────────┐                     overlap (∩)
-   │ prediction  │                 IoU = ──────────────
-   │      ┌──────┼───────┐               combined (∪)
+   ┌─────────────┐                    phần giao (∩)
+   │ prediction  │                IoU = ──────────────
+   │      ┌──────┼───────┐              phần hợp (∪)
    │      │ ████ │       │
-   └──────┼──────┘       │          0.0 = no overlap at all
-          │  truth       │          0.3 = loose but clinically usable
-          └──────────────┘          0.5 = good
-                                    1.0 = pixel-perfect
+   └──────┼──────┘       │         0,0 = không chồng chút nào
+          │ ground truth │         0,3 = lỏng nhưng dùng được trên lâm sàng
+          └──────────────┘         0,5 = tốt
+                                   1,0 = trùng khít từng pixel
 ```
 
-Concretely, a 10×10 prediction and a 10×10 truth offset by 5 pixels:
+Cụ thể: prediction 10×10 và ground truth 10×10 lệch nhau 5 pixel:
 
 ```
-overlap  = 5 × 10          = 50
-combined = 100 + 100 - 50  = 150
-IoU      = 50 / 150        = 0.33
+phần giao = 5 × 10          = 50
+phần hợp  = 100 + 100 - 50  = 150
+IoU       = 50 / 150        = 0,33
 ```
 
-### Grading the rectangles
+### Chấm các hình chữ nhật
 
-Each image has ground-truth boxes (8.3 on average — three radiologists each
-drew their own) and however many the model emitted.
+Mỗi ảnh có các box ground truth (trung bình **8,4** cái — ba bác sĩ mỗi người
+tự vẽ) và một số box do mô hình sinh ra.
 
-1. Compute IoU for every prediction × truth pair.
-2. Match them greedily: highest IoU first, each box used once.
-3. A match with **IoU ≥ 0.3** is a **TP**.
-4. Leftover predictions are **FP** (pointed somewhere wrong).
-5. Leftover truth boxes are **FN** (lesions missed entirely).
+1. Tính IoU cho **mọi cặp** prediction × ground truth.
+2. Ghép **tham lam**: IoU cao nhất trước, mỗi box chỉ dùng một lần.
+3. Cặp ghép có **IoU ≥ 0,3** là một **TP**.
+4. Prediction thừa là **FP** (chỉ vào chỗ sai).
+5. Ground truth thừa là **FN** (tổn thương bị bỏ sót hoàn toàn).
 
-Then the same precision / recall / F1 formulas as Table 4.
+Rồi áp dụng đúng công thức precision / recall / F1 như Bảng 4.
 
-**Why one-to-one matching?** Without it, one lucky rectangle could claim three
-overlapping ground-truth boxes, and the FN count would be meaningless. See
+**Vì sao phải ghép 1-1?** Nếu không, một hình chữ nhật may mắn có thể nhận công
+của ba ground truth chồng lên nhau, và số FN trở nên vô nghĩa. Xem
 `boxes.py:greedy_match`.
 
-**Why 0.3 and not 0.5?** The paper calls 0.3 "a clinically meaningful minimum
-overlap" — enough to point a radiologist at the right region, which is the
-clinical purpose, even if the rectangle is sloppy.
+**Vì sao ngưỡng 0,3 chứ không phải 0,5?** Paper gọi 0,3 là "độ chồng lấp tối
+thiểu có ý nghĩa lâm sàng" — đủ để chỉ cho bác sĩ đúng vùng cần nhìn, tức mục
+đích lâm sàng, kể cả khi hình chữ nhật vẽ cẩu thả.
 
-### mIoU over true positives only
+### mIoU — chỉ tính trên các TP
 
-The average IoU of the matches that succeeded. It answers a different
-question: *when the model does find a lesion, how tightly does it box it?*
+Là IoU trung bình của những cặp ghép **thành công**. Nó trả lời một câu hỏi
+khác: *khi mô hình tìm ra được tổn thương, nó khoanh sát đến mức nào?*
 
-This is why the paper can report recall 0.090 but mIoU 0.615 — the model finds
-few lesions, but the ones it finds it boxes well. Two separate failures,
-separately visible.
+Đây là lý do paper có thể báo recall 0,090 nhưng mIoU 0,615 — mô hình tìm được
+ít tổn thương, nhưng cái nào tìm được thì khoanh khá sát. Hai thất bại khác
+nhau, được nhìn thấy riêng.
 
 ---
 
-## 6. Table 6 — is the output usable per image?
+## 6. Bảng 6 — kết quả có dùng được trên từng ảnh không?
 
-Tables 4 and 5 pool everything into one number. Table 6 asks a clinician's
-question instead: **on what fraction of X-rays did the model produce at least
-one rectangle a radiologist could use?**
+Bảng 4 và 5 gộp tất cả thành một con số. Bảng 6 hỏi theo kiểu của bác sĩ:
+**trên bao nhiêu phần trăm số ảnh, mô hình cho ra được ít nhất một hình chữ
+nhật mà bác sĩ dùng được?**
 
-| Metric | Meaning |
+| Độ đo | Ý nghĩa |
 | --- | --- |
-| `IoU≥0.5 (%)` | share of images with at least one "good" box |
-| `IoU≥0.3 (%)` | share with at least one "acceptable" box |
-| `Mean IoU` | average over *all* predicted boxes, including the bad ones |
+| `IoU≥0.5 (%)` | tỉ lệ ảnh có ít nhất một box "tốt" |
+| `IoU≥0.3 (%)` | tỉ lệ ảnh có ít nhất một box "chấp nhận được" |
+| `Mean IoU` | trung bình trên **mọi** box dự đoán, kể cả box sai |
 
-The paper's fine-tuned model: 22.8% good, 48.6% acceptable. So on roughly half
-of X-rays it points somewhere useful, and on a fifth it is genuinely accurate.
+Mô hình fine-tuned của paper: 22,8% tốt, 48,6% chấp nhận được. Tức khoảng một
+nửa số ảnh nó chỉ vào chỗ có ích, và một phần năm thì thực sự chính xác.
 
-Note `Mean IoU` here (0.133) is far below `mIoU(TP)` in Table 5 (0.615),
-because this one includes every miss, and that one only averages the hits.
+Lưu ý `Mean IoU` ở đây (0,133) thấp hơn nhiều so với `mIoU(TP)` ở Bảng 5
+(0,615), vì bảng này tính cả những lần trượt, còn bảng kia chỉ trung bình trên
+những lần trúng.
 
 ---
 
-## 7. Reading the output
+## 7. Đọc kết quả in ra
 
 ```
 === preds_val_ft.jsonl  (split=val, space=norm1000, match=greedy) ===
 
 Table 4 — VQA (text-based lesion classification)
   Accuracy 0.624   Precision 0.471   Recall 0.926   F1 0.624
-                                     ↑ finds almost everything...
-                                                  ↑ ...but half its claims are wrong
+                                     ↑ tìm được gần hết...
+                                                  ↑ ...nhưng nửa số khẳng định là sai
 
 Table 5 — Bounding-box detection (IoU>=0.3, gt=raw)
   Precision 0.120   Recall 0.090   F1 0.103   mIoU(TP) 0.615
-                                              ↑ when right, boxes are tight
+                                              ↑ khi trúng thì khoanh sát
   4171 predicted vs 5561 ground-truth boxes
 
 Table 6 — Localization quality (per image, n=659)
-  iou_ge_0.5_pct         22.8     ← a fifth of images get a good box
-  iou_ge_0.3_pct         48.6     ← about half get a usable one
+  iou_ge_0.5_pct         22.8     ← 1/5 số ảnh có box tốt
+  iou_ge_0.3_pct         48.6     ← ~1/2 có box dùng được
   mean IoU (all preds)   0.133
 
 Output format: 2140/2637 predictions contain a <loc_...> span (81.2%)
 ```
 
-That last line matters most when things go wrong. If it reads **0.0%**, the
-model emitted no rectangles at all and Tables 5 and 6 are *vacuous*, not poor
-— they are measuring a formatting failure, not localization ability. The
-scorer prints a warning and a sample prediction in that case.
+**Dòng cuối quan trọng nhất khi có sự cố.** Nếu nó ghi **0.0%**, mô hình không
+sinh ra hình chữ nhật nào cả, và Bảng 5 với Bảng 6 là **vô nghĩa chứ không
+phải kém** — chúng đang đo một lỗi định dạng, không phải khả năng định vị. Khi
+đó bộ chấm in thêm cảnh báo và một prediction mẫu.
 
-A zero-shot model usually scores near 0% there: it has never seen the
-`<loc_…>` convention. Learning the format is part of what fine-tuning does.
+Mô hình zero-shot (chưa fine-tune) thường rơi vào 0% ở đây: nó chưa từng thấy
+quy ước `<loc_…>`. **Học định dạng này chính là một phần việc mà fine-tuning
+làm.**
 
 ---
 
-## 8. Checking the scorer itself
+## 8. Tự kiểm tra bộ chấm
 
-Before trusting any model number, confirm the grader works. Replay the answer
-key as if it were the model's output:
+Trước khi tin bất kỳ con số nào của mô hình, hãy xác nhận **cái cân có chuẩn
+không**. Phát lại chính đáp án, giả vờ đó là bài làm của mô hình:
 
 ```bash
 python -m vindr_cxr_vqa.evaluate --oracle --split val
 ```
 
-Expected, and what this repo actually prints:
+Kết quả mong đợi, và cũng là kết quả repo này in ra thật:
 
 ```
-Table 4   Precision 1.000      every pathology named is genuinely present
-Table 6   iou_ge_0.5_pct 100.0 every box lands on a real lesion
+Table 4   Precision 1.000      mọi bệnh lý được nêu đều thực sự có mặt
+Table 6   iou_ge_0.5_pct 100.0 mọi box đều rơi trúng tổn thương thật
 ```
 
-If precision is not 1.000, the text matching is broken. If localization is not
-100%, the coordinate conversion is. **Needs no GPU** — run it on any laptop.
+Nếu precision không phải 1.000 → phần so khớp văn bản hỏng. Nếu localization
+không phải 100% → phần chuyển đổi toạ độ hỏng. **Không cần GPU**, chạy được
+trên laptop bất kỳ.
 
-Recall is *not* 1.000 there (about 0.29), and that is correct: the dataset only
-asks about ~4 of the ~8.4 lesions per image, so even a perfect answer leaves
-most ground-truth boxes unmatched.
+Recall ở đó **không** phải 1,000 (khoảng 0,29), và điều đó là **đúng**: dataset
+chỉ hỏi về ~4 trong số ~8,4 tổn thương mỗi ảnh, nên dù trả lời hoàn hảo vẫn còn
+phần lớn box ground truth không được ghép.
 
-That is also a ceiling on the real model: 2,637 questions against 5,561
-ground-truth boxes means **box recall cannot exceed 0.474** under this
-supervision. So the paper's 0.090 is about **a fifth** of what is reachable,
-not a twentieth.
+Đây cũng là **trần** cho mô hình thật: 2.637 câu hỏi trên 5.561 box ground
+truth → recall box **không thể vượt quá 0,474** với mức giám sát này. Nên con
+số 0,090 của paper là khoảng **một phần năm** của mức khả thi, chứ không phải
+một phần hai mươi.
 
 ---
 
-## 9. Four ways to misread these numbers
+## 9. Bốn cách đọc sai các con số này
 
-1. **High accuracy means a good model.** No — see §4. Read F1.
-2. **Box metrics are class-aware.** They are not. A rectangle on the aorta
-   labelled "Cardiomegaly" still counts as a true positive if it overlaps any
-   ground-truth box. This is also why the label/box mismatch described in
-   [DATA_NOTES.md](DATA_NOTES.md) costs nothing at evaluation time but
-   corrupts training.
-3. **Validation and test are independent.** They are not — test is a
-   300-image subset of the 659 validation images, because Table 3's own
-   numbers only add up that way. The validation figures are the ones
-   comparable to the paper.
-4. **Low box recall means the model is bad at localizing.** Partly. But §8
-   shows 0.474 is the structural ceiling, so 0.090 is roughly a fifth of what
-   is reachable.
+1. **"Accuracy cao nghĩa là mô hình tốt."** Không — xem §4. Hãy đọc F1.
+2. **"Các độ đo box có phân biệt lớp bệnh."** Không. Một hình chữ nhật vẽ trên
+   động mạch chủ nhưng gán nhãn "Cardiomegaly" **vẫn tính là TP** nếu nó chồng
+   lên bất kỳ box ground truth nào. Đây cũng là lý do lỗi lệch nhãn/box mô tả
+   trong [DATA_NOTES.md](DATA_NOTES.md) **không tốn gì lúc đánh giá** nhưng
+   **làm hỏng quá trình huấn luyện**.
+3. **"Validation và test độc lập nhau."** Không — test là tập con 300 ảnh của
+   659 ảnh validation, vì chỉ có cách hiểu đó thì các con số trong Bảng 3 của
+   paper mới cộng lại khớp. Số liệu **validation** mới là số so sánh được với
+   paper.
+4. **"Recall box thấp nghĩa là mô hình định vị kém."** Một phần thôi. §8 cho
+   thấy 0,474 là trần cấu trúc, nên 0,090 là khoảng một phần năm mức khả thi.
 
 ---
 
-## 10. Where each number is computed
+## 10. Mỗi con số được tính ở đâu
 
-| What | File |
+| Việc | File |
 | --- | --- |
-| Does an answer mention pathology X | `evaluate.py:mentioned` |
-| Negation handling | `evaluate.py:_negated` |
-| Table 4 | `evaluate.py:eval_vqa` |
+| Câu trả lời có nhắc bệnh lý X không | `evaluate.py:mentioned` |
+| Xử lý phủ định | `evaluate.py:_negated` |
+| Bảng 4 | `evaluate.py:eval_vqa` |
 | IoU | `boxes.py:iou` |
-| One-to-one matching | `boxes.py:greedy_match` |
-| Tables 5 and 6 | `evaluate.py:eval_boxes` |
-| Format diagnostic | `evaluate.py:diagnose_predictions` |
-| Scorer self-test | `evaluate.py:oracle_predictions` |
-| Side-by-side tables | `results.py:render` |
+| Ghép 1-1 | `boxes.py:greedy_match` |
+| Bảng 5 và 6 | `evaluate.py:eval_boxes` |
+| Chẩn đoán định dạng | `evaluate.py:diagnose_predictions` |
+| Tự kiểm tra bộ chấm | `evaluate.py:oracle_predictions` |
+| Dựng bảng so sánh | `results.py:render` |

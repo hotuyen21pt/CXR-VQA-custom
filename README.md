@@ -42,10 +42,10 @@ scripts/
   make_notebook.py          regenerate the Kaggle notebook
   fetch_model.py            download MedGemma for offline/air-gapped use
 notebooks/kaggle_train.ipynb
-docs/
+docs/  (in Vietnamese)
+  PIPELINE.md               one record traced through every stage
   DATA_NOTES.md             what the released data actually contains
   EVALUATION.md             the metrics explained from scratch
-  EVALUATION.vi.md          the same, in Vietnamese
 tests/                      pytest, no GPU needed
 ```
 
@@ -317,7 +317,9 @@ instead.
 New to computer vision? **[docs/EVALUATION.md](docs/EVALUATION.md)** explains
 all of this from scratch — what IoU is, what precision and recall mean, why
 accuracy is misleading here, and how to read the output — with worked
-arithmetic on real records. Vietnamese: **[docs/EVALUATION.vi.md](docs/EVALUATION.vi.md)**.
+arithmetic on real records. **[docs/PIPELINE.md](docs/PIPELINE.md)** traces a
+single record through every stage, from the raw JSON to its row in the table.
+*(Both are in Vietnamese.)*
 
 The short version. Three commands, in order:
 
