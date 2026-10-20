@@ -153,15 +153,26 @@ python scripts/make_kaggle_bundle.py
 #    -> outputs/vindr-cxr-vqa-kaggle.zip   (code + JSONL + the 4,394 PNGs)
 ```
 
-1. **kaggle.com/datasets → New Dataset** → upload the zip. Kaggle unpacks it to
-   `/kaggle/input/<slug>/`.
+1. **kaggle.com/datasets → New Dataset** → upload the zip. Kaggle unpacks it,
+   so the contents land under `/kaggle/input/…/<slug>/`.
 2. **Code → New Notebook → File → Import Notebook** →
-   `notebooks/kaggle_train.ipynb`.
-3. *Add Input* → attach the dataset you just created.
-4. *Add Input → Models* → attach MedGemma 4B instruction-tuned (Transformers),
-   and paste its path into `MODEL_PATH` in the model cell.
+   `notebooks/kaggle_train.ipynb`. **Import before attaching anything** —
+   Kaggle applies a notebook's stored settings on import. This notebook ships
+   no accelerator, data-source or internet metadata precisely so nothing of
+   yours is overwritten, but importing on top of a configured notebook can
+   still reset the panel.
+3. *Add Input* → attach the dataset you created, and paste its path into
+   `BUNDLE` in the setup cell.
+4. *Add Input → Models* → attach MedGemma 4B-it or MedGemma 1.5 4B-it
+   (Transformers), and paste its path into `MODEL_PATH` in the model cell.
 5. *Settings* → **Accelerator: GPU T4 x2** (or P100).
 6. Run all.
+
+Kaggle nests inputs differently depending on how they were attached —
+`/kaggle/input/<slug>` for some, `/kaggle/input/datasets/<user>/<slug>` and
+`/kaggle/input/models/<user>/<model>/<framework>/<variation>/<version>/` for
+others. Both cells walk the tree, so leaving `BUNDLE` and `MODEL_PATH` empty
+works too; pasting them just gives a clearer error when something is missing.
 
 ### Running with Internet off
 

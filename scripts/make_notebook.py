@@ -36,6 +36,13 @@ Both paths can be left empty — the cells search the attached inputs — but
 pasting them is faster and gives a clearer error when something is not
 attached.
 
+> **Import order matters.** Import this notebook *first*, then attach the
+> inputs and set the accelerator. Kaggle applies a notebook's stored settings
+> on import and will say *"your Accelerator, Data Sources and Internet
+> settings have changed"* — this notebook deliberately stores none, so nothing
+> of yours is overwritten, but an import after attaching can still reset the
+> panel. If your inputs disappear, just add them again.
+
 **Running with Internet OFF** — set `OFFLINE = True` in the next cell. That
 skips `pip install` and every hub lookup, so the model *must* be attached
 (step 2) and Kaggle's preinstalled `transformers` must be ≥ 4.52. The preflight
@@ -490,14 +497,16 @@ def build() -> dict:
     ]
     return {
         "cells": cells,
+        # Deliberately no "kaggle" metadata block and no "accelerator" key.
+        # Kaggle applies those on import and warns that "your Accelerator,
+        # Data Sources and Internet settings have changed" -- an empty
+        # dataSources list would detach the inputs the user had just added.
+        # Leaving them out keeps whatever the notebook is already configured
+        # with; the intro cell says which settings to pick by hand.
         "metadata": {
             "kernelspec": {"display_name": "Python 3", "language": "python",
                            "name": "python3"},
             "language_info": {"name": "python", "version": "3.11"},
-            "accelerator": "GPU",
-            "kaggle": {"accelerator": "nvidiaTeslaT4", "dataSources": [],
-                       "isInternetEnabled": True, "language": "python",
-                       "sourceType": "notebook"},
         },
         "nbformat": 4,
         "nbformat_minor": 5,
