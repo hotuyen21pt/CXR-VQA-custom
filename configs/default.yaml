@@ -1,0 +1,101 @@
+# VinDr-CXR-VQA — reference configuration.
+# Hyper-parameters follow arXiv:2511.00504v2 Section 3.1 unless noted.
+
+paths:
+  # Local copy of VinDr-CXR: annotations_*.csv, image_labels_*.csv,
+  # train_data/train/*.png, test_data/test/*.png
+  dataset_dir: dataset
+  # data_v1.json from huggingface.co/datasets/Dangindev/VinDR-CXR-VQA
+  # (downloaded automatically on first build)
+  vqa_json: data/raw/data_v1.json
+  processed_dir: data/processed
+  output_dir: outputs
+
+split:
+  # Table 3: 3,735 train (85%) / 659 validation (15%).
+  val_ratio: 0.15
+  # Table 3 also lists a 300-image test split. 3,735 + 659 == 4,394 (the whole
+  # release), so test is a stratified SUBSET of validation, not a third
+  # partition. Set disjoint_test: true to carve it out of validation instead.
+  test_size: 300
+  disjoint_test: false
+  seed: 42
+
+build:
+  # IoU at which two same-class radiologist boxes are treated as the same
+  # lesion when fusing the three independent VinDr readings into a consensus.
+  fuse_iou: 0.3
+
+data:
+  # Which ground-truth box supervises training:
+  #   published  — gt_location exactly as released (reproduces the paper, but
+  #                ~60% of boxes belong to a different pathology than
+  #                gt_finding; see docs/DATA_NOTES.md)
+  #   fixed      — gt_location_fixed, re-joined to gt_finding (recommended)
+  box_source: fixed
+  # Coordinate space written into the supervision target:
+  #   norm1000   — <loc_123_456_789_012>, fixed 3-digit width, required by the
+  #                differentiable soft-IoU loss
+  #   pixel      — original DICOM pixels, reproducing the released answer text
+  loc_format: norm1000
+  # Append the clinical reasoning to the target after the answer.
+  include_reason: true
+  image_size: 896          # MedGemma / SigLIP native input resolution
+  max_seq_length: 1024
+
+model:
+  # Gated on HuggingFace: accept the licence and set HF_TOKEN before training.
+  name: google/medgemma-4b-it
+  attn_implementation: eager   # Gemma3 recommends eager attention
+  torch_dtype: auto            # bf16 on Ampere+, fp16 on T4/P100
+
+lora:
+  # Section 3.1: r=16, alpha=32, dropout=0.1, ~0.21% trainable (8.9M params).
+  r: 16
+  alpha: 32
+  dropout: 0.1
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  # Keep the vision tower frozen; the paper adapts the language side only.
+  freeze_vision_tower: true
+
+train:
+  # Section 3.1: AdamW, lr 2e-5, weight decay 0.01, batch 4 x grad-accum 4
+  # (effective 16), 3 epochs, fp16 mixed precision.
+  epochs: 3
+  batch_size: 4
+  grad_accum: 4
+  lr: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  lr_scheduler: cosine
+  max_grad_norm: 1.0
+  precision: fp16
+  gradient_checkpointing: true
+  # 4-bit base weights (QLoRA). Required to fit a 16 GB Kaggle T4/P100.
+  load_in_4bit: true
+  logging_steps: 25
+  save_strategy: epoch
+  seed: 42
+
+loss:
+  # Section 3.1: L_total = L_VQA + lambda * L_bbox, lambda = 0.5.
+  lambda_bbox: 0.5
+  # IoU-based regression on the coordinates emitted inside <loc_...>.
+  # giou  — differentiable soft-IoU over the digit-token distribution
+  # none  — plain cross-entropy only (ablation)
+  bbox_loss: giou
+
+eval:
+  # Section 3.2: a prediction is a TP when it overlaps a ground-truth box with
+  # IoU >= 0.3; mIoU is averaged over true positives only.
+  iou_threshold: 0.3
+  good_localization_iou: 0.5
+  acceptable_localization_iou: 0.3
+  # greedy — one-to-one matching by descending IoU (default)
+  # any    — a prediction is a TP if it overlaps ANY gt box
+  match: greedy
+  max_new_tokens: 256
+
+generate:
+  do_sample: false
+  num_beams: 1

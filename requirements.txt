@@ -1,0 +1,14 @@
+# Dataset building, statistics and evaluation need nothing beyond the standard
+# library. Everything below is only required to train or run the model.
+
+# --- model -----------------------------------------------------------------
+torch>=2.4
+transformers>=4.52        # MedGemma is a Gemma 3 model
+accelerate>=1.4
+peft>=0.14                # LoRA
+bitsandbytes>=0.45        # 4-bit base weights (QLoRA), for 16 GB GPUs
+sentencepiece>=0.2
+
+# --- images and config -----------------------------------------------------
+Pillow>=10.0              # also used by vindr_cxr_vqa.visualize
+PyYAML>=6.0               # optional: configs fall back to a built-in parser

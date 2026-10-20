@@ -1,0 +1,18 @@
+# Built artefacts — regenerate with `python -m vindr_cxr_vqa.build_dataset`
+data/processed/
+data/raw/
+outputs/
+
+# The VinDr-CXR images and annotations are redistributed under CC BY 4.0 but
+# are far too large for git; point configs/default.yaml at your local copy.
+dataset/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+.venv/
+
+# The paper itself — fetch it from arXiv:2511.00504 instead of vendoring it
+*.pdf
