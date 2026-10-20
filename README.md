@@ -221,11 +221,22 @@ each, so use *Save Version → Save & Run All* and attach the previous run's
 output as an input. The train cell copies any `medgemma-lora` found under
 `/kaggle/input` back into place before resuming.
 
-Use `--no-images` if you would rather attach the X-rays as a separate dataset:
+### Updating the code on Kaggle without re-uploading 362 MB
+
+Of that bundle, 356 MB is images that never change. Once the data is on
+Kaggle, split it in two and the images stay put:
 
 ```bash
-python scripts/make_kaggle_bundle.py --no-images   # a few MB
+python scripts/make_kaggle_bundle.py --part code     # 6.3 MB — the package + JSONL
+python scripts/make_kaggle_bundle.py --part images   # 356 MB — upload once
 ```
+
+Attach both as inputs. The setup cell locates the code, the JSONL and the
+images independently, so they can share one dataset or sit in two. Later code
+fixes are then a 6 MB new version of the code dataset.
+
+The setup cell also fails immediately if the attached code is missing a module
+the notebook needs, rather than halfway through a GPU session.
 
 ---
 

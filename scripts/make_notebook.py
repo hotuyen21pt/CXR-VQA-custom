@@ -26,6 +26,10 @@ Dataset for Explainable Chest X-ray Analysis with Multi-Task Learning*.
    (`python scripts/make_kaggle_bundle.py`) as a Kaggle Dataset and attach it
    via *Add Input*. Paste its path into `BUNDLE` in the setup cell, e.g.
    `/kaggle/input/datasets/<user>/vqa-repo`.
+
+   Or attach two inputs — `--part code` (≈9 MB) and `--part images` (≈362 MB).
+   The images never change, so later code fixes then cost a 9 MB re-upload
+   instead of 362 MB. The setup cell finds both either way.
 2. **Attach the model.** *Add Input → Models* → MedGemma 4B instruction-tuned
    (Transformers); MedGemma **1.5** 4B-it works too — both are Gemma 3 and load
    through the same `AutoModelForImageTextToText` path. Paste its path into
@@ -68,49 +72,62 @@ SETUP = '''\
 import os, sys, glob, json, shutil, subprocess
 
 # ---------------------------------------------------------------------------
-# Paste the attached dataset path here, e.g.
-#   "/kaggle/input/datasets/<user>/vqa-repo"
-# Leave it empty to search every attached input automatically.
+# Optional explicit paths. Leave empty to search the attached inputs.
+#   BUNDLE  the code (and the built JSONL, unless it is in a separate input)
+#   IMAGES  the chest X-rays, when they were attached as their own dataset
+# e.g. "/kaggle/input/datasets/<user>/vqa-repo"
 BUNDLE = ""
+IMAGES = ""
 # ---------------------------------------------------------------------------
 
-def find_bundle(root="/kaggle/input", max_depth=5):
-    """Any attached directory holding the vindr_cxr_vqa package.
+def find_input(marker, root="/kaggle/input", max_depth=6):
+    """Shallowest attached directory containing `marker`.
 
     Kaggle nests inputs differently depending on how they were attached
-    (/kaggle/input/<slug> for some, /kaggle/input/datasets/<user>/<slug> for
-    others), so this walks rather than globbing one level.
+    (/kaggle/input/<slug> for some, /kaggle/input/datasets/<user>/<slug> or
+    /kaggle/input/models/<user>/<model>/<fw>/<var>/<ver>/ for others), so this
+    walks rather than globbing one level.
     """
-    hits = []
-    base = root.rstrip("/").count("/")
+    hits, base = [], root.rstrip("/").count("/")
     for dirpath, dirnames, _ in os.walk(root):
         if dirpath.count("/") - base >= max_depth:
             dirnames[:] = []
             continue
-        if "vindr_cxr_vqa" in dirnames:
+        # Never descend into the image tree; there are thousands of files.
+        dirnames[:] = [d for d in dirnames if d != "train"]
+        if os.path.exists(os.path.join(dirpath, marker)):
             hits.append(dirpath)
-            dirnames[:] = []          # do not descend into a match
+            dirnames[:] = []
     return sorted(hits, key=len)[0] if hits else None
 
-if BUNDLE:
-    if not os.path.isdir(os.path.join(BUNDLE, "vindr_cxr_vqa")):
-        raise SystemExit(f"{BUNDLE} does not contain vindr_cxr_vqa/\\n"
-                         f"found instead: {os.listdir(BUNDLE)}")
-else:
-    BUNDLE = find_bundle()
-    if not BUNDLE:
-        raise SystemExit(
-            "No attached input contains vindr_cxr_vqa/. Use 'Add Input' to "
-            "attach the bundle from scripts/make_kaggle_bundle.py, then set "
-            "BUNDLE above.\\n"
-            f"Attached: {glob.glob('/kaggle/input/*/') + glob.glob('/kaggle/input/*/*/')}")
-print("bundle:", BUNDLE)
+def attached():
+    return sorted(glob.glob("/kaggle/input/*/") + glob.glob("/kaggle/input/*/*/"))
 
-# /kaggle/input is read-only, so work from a writable copy.
+# The code, the built JSONL and the images may live in one input or in two.
+CODE_ROOT = BUNDLE or find_input("vindr_cxr_vqa")
+if not CODE_ROOT:
+    raise SystemExit("No attached input contains vindr_cxr_vqa/.\\n"
+                     f"Attached: {attached()}")
+
+PROCESSED_ROOT = find_input("data/processed/train.jsonl")
+IMAGES_ROOT = IMAGES or find_input("dataset/train_data/train")
+if not PROCESSED_ROOT:
+    raise SystemExit("No attached input contains data/processed/train.jsonl.\\n"
+                     f"Attached: {attached()}")
+if not IMAGES_ROOT:
+    raise SystemExit("No attached input contains dataset/train_data/train/.\\n"
+                     "Attach the images part of the bundle.\\n"
+                     f"Attached: {attached()}")
+
+print("code     :", CODE_ROOT)
+print("jsonl    :", PROCESSED_ROOT)
+print("images   :", IMAGES_ROOT)
+
+# /kaggle/input is read-only, so work from a writable copy of the code.
 WORK = "/kaggle/working/vindr"
 os.makedirs(WORK, exist_ok=True)
 for item in ("vindr_cxr_vqa", "configs", "requirements.txt", "docs"):
-    src = os.path.join(BUNDLE, item)
+    src = os.path.join(CODE_ROOT, item)
     if not os.path.exists(src):
         continue
     dst = os.path.join(WORK, item)
@@ -121,8 +138,17 @@ for item in ("vindr_cxr_vqa", "configs", "requirements.txt", "docs"):
 
 os.chdir(WORK)
 sys.path.insert(0, WORK)
-print("cwd:", os.getcwd())
-print(os.listdir(WORK))'''
+print("\\ncwd:", os.getcwd())
+print(sorted(os.listdir(WORK)))
+
+# Fail now, clearly, if the attached code predates modules the notebook needs.
+missing = [m for m in ("preflight", "results", "evaluate", "train", "infer")
+           if not os.path.exists(os.path.join(WORK, "vindr_cxr_vqa", m + ".py"))]
+if missing:
+    raise SystemExit(
+        f"The attached code is out of date — missing {missing}.\\n"
+        "Rebuild with `python scripts/make_kaggle_bundle.py --part code` and "
+        "upload a new version of that dataset.")'''
 
 OFFLINE = '''\
 # None = detect automatically; set True/False to force it.
@@ -256,8 +282,8 @@ CFG_PATH = os.path.join(WORK, "configs", "kaggle.yaml")
 with open(os.path.join(WORK, "configs", "default.yaml")) as fh:
     cfg = yaml.safe_load(fh)
 
-cfg["paths"]["dataset_dir"]   = os.path.join(BUNDLE, "dataset")
-cfg["paths"]["processed_dir"] = os.path.join(BUNDLE, "data", "processed")
+cfg["paths"]["dataset_dir"]   = os.path.join(IMAGES_ROOT, "dataset")
+cfg["paths"]["processed_dir"] = os.path.join(PROCESSED_ROOT, "data", "processed")
 cfg["paths"]["vqa_json"]      = "/kaggle/working/data_v1.json"
 cfg["paths"]["output_dir"]    = "/kaggle/working/outputs"
 

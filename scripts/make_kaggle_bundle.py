@@ -7,8 +7,14 @@ Only the 4,394 chest X-rays that VinDr-CXR-VQA actually references are copied,
 which keeps the bundle near 400 MB instead of the 1.3 GB of the full VinDr
 train partition.
 
-    python scripts/make_kaggle_bundle.py
-    python scripts/make_kaggle_bundle.py --no-images   # code + JSONL only
+    python scripts/make_kaggle_bundle.py              # one zip, ~362 MB
+    python scripts/make_kaggle_bundle.py --part code  # code + JSONL, ~9 MB
+    python scripts/make_kaggle_bundle.py --part images
+
+Splitting is worth it once the repo is already on Kaggle: the images never
+change, but the code does, so uploading two datasets means later fixes cost a
+9 MB re-upload instead of 362 MB. The notebook finds the code and the images
+wherever they are attached, together or apart.
 
 Standard library only.
 """
@@ -92,8 +98,7 @@ def copy_processed(repo: str, stage: str) -> list[str]:
     return sorted(ids)
 
 
-def copy_images(repo: str, stage: str, dataset_dir: str,
-                image_ids: list[str]) -> int:
+def copy_images(stage: str, dataset_dir: str, image_ids: list[str]) -> int:
     src_dir = os.path.join(dataset_dir, "train_data", "train")
     dst_dir = os.path.join(stage, "dataset", "train_data", "train")
     os.makedirs(dst_dir, exist_ok=True)
@@ -126,28 +131,35 @@ def copy_images(repo: str, stage: str, dataset_dir: str,
     return total
 
 
-def write_manifest(stage: str, n_images: int, with_images: bool) -> None:
+def write_manifest(stage: str, n_images: int, part: str) -> None:
+    contents = {
+        "all": f"the repo, the built dataset and the {n_images} chest X-rays "
+               "it references — everything needed in one input",
+        "code": "the repo and the built dataset (JSONL + index). **No "
+                "images** — attach the images part as a second input",
+        "images": f"the {n_images} chest X-rays and the VinDr CSVs. **No "
+                  "code** — attach the code part as a second input",
+    }[part]
     with open(os.path.join(stage, "KAGGLE_README.md"), "w",
               encoding="utf-8") as fh:
-        fh.write(f"""# VinDr-CXR-VQA — Kaggle bundle
+        fh.write(f"""# VinDr-CXR-VQA — Kaggle bundle ({part})
 
-Self-contained copy of the repo, the built dataset and
-{"the " + str(n_images) + " chest X-rays it references" if with_images
- else "**no images** (attach the images separately)"}.
+Contains {contents}.
 
 ## How to use
 
 1. Kaggle → *Datasets* → *New Dataset* → upload this zip. Kaggle unpacks it,
-   so the contents land at `/kaggle/input/<your-dataset-slug>/`.
-2. Open `notebooks/kaggle_train.ipynb` (File → Import Notebook), attach this
-   dataset, and set the accelerator to **GPU T4 x2** or **P100**.
-3. *Add Input → Models* → attach MedGemma 4B instruction-tuned, and paste its
-   path into `MODEL_PATH` in the model cell.
+   so the contents land under `/kaggle/input/…/<your-dataset-slug>/`.
+2. Import `notebooks/kaggle_train.ipynb` **before** attaching anything
+   (Kaggle applies a notebook's stored settings on import), then attach this
+   dataset and set the accelerator to **GPU T4 x2** or **P100**.
+3. *Add Input → Models* → attach MedGemma 4B-it or MedGemma 1.5 4B-it, and
+   paste its path into `MODEL_PATH` in the model cell.
 4. Run all cells.
 
-Works with Internet **off**: set `OFFLINE = True` in the second cell. No
-`HF_TOKEN` is needed once the model is attached — it only ever authenticates a
-download. The dataset is already built inside this bundle.
+Works with Internet **off** — the notebook detects it and skips every
+download. No `HF_TOKEN` is needed once the model is attached; it only ever
+authenticates a download. The dataset is already built inside this bundle.
 
 ## Layout
 
@@ -159,6 +171,9 @@ data/processed/         train/val/test JSONL + images.json
 dataset/train_data/train/*.png
 dataset/annotations_train.csv, image_labels_train.csv
 ```
+
+Code and images can live in two separate datasets (`--part code` /
+`--part images`); the notebook finds each wherever it is attached.
 """)
 
 
@@ -187,33 +202,43 @@ def main() -> None:
     ap.add_argument("--repo", default=REPO)
     ap.add_argument("--dataset-dir", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--part", choices=("all", "code", "images"), default="all",
+                    help="all: one zip; code: package + JSONL; images: PNGs "
+                         "and the VinDr CSVs")
     ap.add_argument("--no-images", action="store_true",
-                    help="omit the PNGs (code + JSONL only, a few MB)")
+                    help="deprecated alias for --part code")
     ap.add_argument("--keep-stage", action="store_true")
     args = ap.parse_args()
+    if args.no_images:
+        args.part = "code"
 
     from vindr_cxr_vqa.config import load_config
     cfg = load_config(os.path.join(args.repo, "configs", "default.yaml"))
     dataset_dir = args.dataset_dir or cfg.paths.dataset_dir
 
+    suffix = {"all": "", "code": "-code", "images": "-images"}[args.part]
     stage = os.path.join(args.repo, "outputs", "kaggle_bundle")
     out_zip = args.out or os.path.join(
-        args.repo, "outputs",
-        "vindr-cxr-vqa-kaggle%s.zip" % ("-code" if args.no_images else ""))
+        args.repo, "outputs", f"vindr-cxr-vqa-kaggle{suffix}.zip")
     if os.path.isdir(stage):
         shutil.rmtree(stage)
     os.makedirs(stage, exist_ok=True)
 
-    copy_code(args.repo, stage)
-    nb_src = os.path.join(args.repo, "notebooks")
-    if os.path.isdir(nb_src):
-        shutil.copytree(nb_src, os.path.join(stage, "notebooks"),
-                        dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns("__pycache__"))
+    # The image ids always come from the built JSONL, even when only the
+    # images are being packaged.
     ids = copy_processed(args.repo, stage)
-    if not args.no_images:
-        copy_images(args.repo, stage, dataset_dir, ids)
-    write_manifest(stage, len(ids), not args.no_images)
+    if args.part == "images":
+        shutil.rmtree(os.path.join(stage, "data"))
+    else:
+        copy_code(args.repo, stage)
+        nb_src = os.path.join(args.repo, "notebooks")
+        if os.path.isdir(nb_src):
+            shutil.copytree(nb_src, os.path.join(stage, "notebooks"),
+                            dirs_exist_ok=True,
+                            ignore=shutil.ignore_patterns("__pycache__"))
+    if args.part in ("all", "images"):
+        copy_images(stage, dataset_dir, ids)
+    write_manifest(stage, len(ids), args.part)
 
     os.makedirs(os.path.dirname(out_zip), exist_ok=True)
     if os.path.exists(out_zip):
