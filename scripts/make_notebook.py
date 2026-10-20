@@ -24,10 +24,17 @@ Dataset for Explainable Chest X-ray Analysis with Multi-Task Learning*.
 
 1. **Attach the data.** Upload `vindr-cxr-vqa-kaggle.zip`
    (`python scripts/make_kaggle_bundle.py`) as a Kaggle Dataset and attach it
-   via *Add Input*.
+   via *Add Input*. Paste its path into `BUNDLE` in the setup cell, e.g.
+   `/kaggle/input/datasets/<user>/vqa-repo`.
 2. **Attach the model.** *Add Input → Models* → MedGemma 4B instruction-tuned
-   (Transformers). Copy its path into `MODEL_PATH` a few cells down.
+   (Transformers); MedGemma **1.5** 4B-it works too — both are Gemma 3 and load
+   through the same `AutoModelForImageTextToText` path. Paste its path into
+   `MODEL_PATH` a few cells down.
 3. **Accelerator** → `GPU T4 x2` or `GPU P100`. *Settings → Accelerator*.
+
+Both paths can be left empty — the cells search the attached inputs — but
+pasting them is faster and gives a clearer error when something is not
+attached.
 
 **Running with Internet OFF** — set `OFFLINE = True` in the next cell. That
 skips `pip install` and every hub lookup, so the model *must* be attached
@@ -54,15 +61,43 @@ the fine-tuning section for how to carry checkpoints over."""
 SETUP = '''\
 import os, sys, glob, json, shutil, subprocess
 
-# --- locate the attached bundle -------------------------------------------
-CANDIDATES = [p for p in glob.glob("/kaggle/input/*")
-              if os.path.isdir(os.path.join(p, "vindr_cxr_vqa"))]
-if not CANDIDATES:
-    raise SystemExit(
-        "No attached dataset contains vindr_cxr_vqa/. Use 'Add Input' to "
-        "attach the bundle produced by scripts/make_kaggle_bundle.py.\\n"
-        f"Seen: {glob.glob('/kaggle/input/*')}")
-BUNDLE = CANDIDATES[0]
+# ---------------------------------------------------------------------------
+# Paste the attached dataset path here, e.g.
+#   "/kaggle/input/datasets/<user>/vqa-repo"
+# Leave it empty to search every attached input automatically.
+BUNDLE = ""
+# ---------------------------------------------------------------------------
+
+def find_bundle(root="/kaggle/input", max_depth=5):
+    """Any attached directory holding the vindr_cxr_vqa package.
+
+    Kaggle nests inputs differently depending on how they were attached
+    (/kaggle/input/<slug> for some, /kaggle/input/datasets/<user>/<slug> for
+    others), so this walks rather than globbing one level.
+    """
+    hits = []
+    base = root.rstrip("/").count("/")
+    for dirpath, dirnames, _ in os.walk(root):
+        if dirpath.count("/") - base >= max_depth:
+            dirnames[:] = []
+            continue
+        if "vindr_cxr_vqa" in dirnames:
+            hits.append(dirpath)
+            dirnames[:] = []          # do not descend into a match
+    return sorted(hits, key=len)[0] if hits else None
+
+if BUNDLE:
+    if not os.path.isdir(os.path.join(BUNDLE, "vindr_cxr_vqa")):
+        raise SystemExit(f"{BUNDLE} does not contain vindr_cxr_vqa/\\n"
+                         f"found instead: {os.listdir(BUNDLE)}")
+else:
+    BUNDLE = find_bundle()
+    if not BUNDLE:
+        raise SystemExit(
+            "No attached input contains vindr_cxr_vqa/. Use 'Add Input' to "
+            "attach the bundle from scripts/make_kaggle_bundle.py, then set "
+            "BUNDLE above.\\n"
+            f"Attached: {glob.glob('/kaggle/input/*/') + glob.glob('/kaggle/input/*/*/')}")
 print("bundle:", BUNDLE)
 
 # /kaggle/input is read-only, so work from a writable copy.
@@ -134,17 +169,22 @@ upload the result as a Dataset."""
 MODEL = '''\
 # ---------------------------------------------------------------------------
 # Paste the attached model path here. Add Input -> Models shows it in the
-# right-hand panel, e.g. "/kaggle/input/medgemma/transformers/4b-it/1".
+# right-hand panel, e.g.
+#   "/kaggle/input/models/<user>/googlemedgemma-1-5-4b-it/transformers/default/1/medgemma-1.5-4b-it"
+# Leave empty to search the attached inputs automatically.
 MODEL_PATH = ""
 # ---------------------------------------------------------------------------
 
 def find_model_dir(root="/kaggle/input"):
     """Any attached directory holding config.json plus safetensors weights."""
     hits = []
-    for dirpath, _, files in os.walk(root):
+    for dirpath, dirnames, files in os.walk(root):
+        # The data bundle holds thousands of PNGs; nothing to find in there.
+        dirnames[:] = [d for d in dirnames if d != "train"]
         if "config.json" in files and any(f.endswith(".safetensors")
                                           for f in files):
             hits.append(dirpath)
+            dirnames[:] = []
     # Prefer a path naming medgemma, then the one with the most weight shards.
     hits.sort(key=lambda p: ("medgemma" not in p.lower(),
                              -len([f for f in os.listdir(p)

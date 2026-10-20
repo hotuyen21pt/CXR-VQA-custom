@@ -19,12 +19,12 @@ import sys
 
 from .config import load_config
 
-#: Minimum versions. MedGemma is a Gemma 3 model, which transformers only
-#: learned to load in 4.50; 4.52 is the first release with a stable
-#: AutoModelForImageTextToText path for it.
+#: Minimum versions. Both MedGemma 4B-it and MedGemma 1.5 4B-it are Gemma 3
+#: models, and Google's model card states Gemma 3 is supported "starting from
+#: transformers 4.50.0".
 REQUIRED = {
     "torch": "2.4",
-    "transformers": "4.52",
+    "transformers": "4.50",
     "accelerate": "1.4",
     "peft": "0.14",
     "PIL": None,            # Pillow, imported as PIL
