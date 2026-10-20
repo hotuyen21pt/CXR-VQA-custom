@@ -34,9 +34,11 @@ vindr_cxr_vqa/
   infer.py                  generation -> predictions JSONL
   evaluate.py               Tables 4, 5 and 6
   visualize.py              Figure 2 overlays
+  preflight.py              check packages, GPU, weights and data before training
 scripts/
   make_kaggle_bundle.py     package repo + data + images into one zip
   make_notebook.py          regenerate the Kaggle notebook
+  fetch_model.py            download MedGemma for offline/air-gapped use
 notebooks/kaggle_train.ipynb
 tests/                      pytest, no GPU needed
 ```
@@ -109,10 +111,39 @@ python scripts/make_kaggle_bundle.py
 2. **Code → New Notebook → File → Import Notebook** →
    `notebooks/kaggle_train.ipynb`.
 3. *Add Input* → attach the dataset you just created.
-4. *Settings* → **Accelerator: GPU T4 x2** (or P100), **Internet: On**.
-5. *Add-ons → Secrets* → add `HF_TOKEN` (accept the
-   [MedGemma licence](https://huggingface.co/google/medgemma-4b-it) first).
+4. *Add Input → Models* → attach MedGemma 4B instruction-tuned (Transformers),
+   and paste its path into `MODEL_PATH` in the model cell.
+5. *Settings* → **Accelerator: GPU T4 x2** (or P100).
 6. Run all.
+
+### Running with Internet off
+
+Set `OFFLINE = True` in the second cell. That skips `pip install` and disables
+every hub lookup (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`), so two things
+must hold:
+
+- **The weights are attached** (step 4). Nothing can be downloaded. If no
+  MedGemma model is available to attach, run `python scripts/fetch_model.py`
+  on a machine with internet — ≈8 GB, gated, so accept the licence first — and
+  upload the resulting folder as a Kaggle Dataset.
+- **Kaggle's preinstalled `transformers` is ≥ 4.52.** MedGemma is a Gemma 3
+  model and older releases cannot load it. If it is too old you need internet
+  once, or a Dataset of wheels to `pip install --no-index` from.
+
+No `HF_TOKEN` is needed in this mode — it only ever authenticates a download.
+The built dataset ships inside the bundle, so `data_v1.json` is never fetched
+either.
+
+Check everything at once before committing a GPU session to it:
+
+```bash
+python -m vindr_cxr_vqa.preflight --config configs/kaggle.yaml
+```
+
+It reports package versions, GPU and VRAM, whether the model directory really
+holds `config.json` + `*.safetensors`, and whether the dataset's image paths
+resolve — exiting non-zero if anything is blocking. The notebook runs it
+automatically right after setup.
 
 The notebook rewrites the config for a 16 GB GPU: 4-bit base weights, batch 1
 with gradient accumulation 16 to keep the paper's effective batch of 16, and
