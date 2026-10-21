@@ -6,6 +6,11 @@ code của repo này, không phải ví dụ bịa.
 
 Bản ghi được chọn: ảnh `9a5094b2563a1ef3ff50dc5c7ff71345`, câu hỏi đầu tiên.
 
+> **Bản có hình:** [PIPELINE_VISUAL.pdf](PIPELINE_VISUAL.pdf) — cùng vết này
+> nhưng có ảnh X-quang thật với box của bác sĩ vẽ đè lên đúng tỉ lệ, sơ đồ từng
+> chặng, và phần "cuối cùng ra output gì". Dựng lại bằng
+> `python scripts/make_pipeline_pdf.py`.
+
 ```
          data_v1.json (HuggingFace, CHỈ CÓ TEXT)
                     +                                 ┐

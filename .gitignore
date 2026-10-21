@@ -16,3 +16,6 @@ __pycache__/
 
 # The paper itself — fetch it from arXiv:2511.00504 instead of vendoring it
 *.pdf
+# except the one this repo generates: regenerating it needs the images and the
+# built dataset, which a fresh clone does not have.
+!docs/PIPELINE_VISUAL.pdf
