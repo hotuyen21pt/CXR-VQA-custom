@@ -73,6 +73,13 @@ class SoftBoxGIoULoss(torch.nn.Module):
             logits: ``(B, 4*digits_per_coord, vocab)`` at the digit positions.
             target: ``(B, 4)`` ground-truth box, same ``[0, 1]`` scale.
         """
+        # Trainer moves `model` onto the GPU, but this loss is handed to it
+        # separately and is nobody's submodule, so its buffers would sit on
+        # the CPU for ever and index_select would fail on the first step.
+        # Follow the logits instead, once, rather than asking every caller to
+        # remember to move us.
+        if self.digit_ids.device != logits.device:
+            self.to(logits.device)
         return giou_loss(self.decode(logits), target.to(torch.float32))
 
 

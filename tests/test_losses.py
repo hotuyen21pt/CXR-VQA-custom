@@ -130,6 +130,20 @@ def test_soft_loss_rejects_a_bad_digit_table():
         SoftBoxGIoULoss([1, 2, 3])
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(),
+                    reason="needs a second device to move between")
+def test_the_loss_follows_the_logits_onto_the_gpu():
+    """It is nobody's submodule, so nothing else will move it there."""
+    loss = SoftBoxGIoULoss(DIGIT_IDS)            # built on the CPU, as in train.py
+    logits = _one_hot_logits([3, 3, 2, 5, 8, 8, 7, 9, 4, 7, 8, 3]).cuda()
+    target = torch.tensor([[0.332, 0.588, 0.794, 0.783]]).cuda()
+
+    out = loss(logits, target)                   # would raise before the fix
+
+    assert out.device.type == "cuda"
+    assert loss.digit_ids.device == logits.device
+
+
 def test_resolve_dtype_honours_an_explicit_choice():
     from vindr_cxr_vqa import modeling
     assert modeling.resolve_dtype("float16") is torch.float16

@@ -177,30 +177,36 @@ def locate(marker, what):
 
 # Checking that the .py files merely exist is not enough: an attached dataset
 # can carry an older copy of a module that is present but missing a fix, and
-# the failure then surfaces an hour later as a traceback from deep inside a
-# library. So check for the specific functions each fix introduced.
+# the failure then surfaces half an hour later as a traceback from deep inside
+# a library. So look for a snippet each fix introduced.
+#
+# Snippets, not just function names: some fixes add no new function -- the one
+# that moves the box loss onto the GPU is a single line inside an existing
+# method -- and a names-only check waves those through.
 NEEDS = {
-    "modeling":  ["load_base_model", "disable_broken_peft_dispatchers",
-                  "adapt_training_kwargs", "language_side_targets"],
-    "evaluate":  ["diagnose_predictions", "load_predictions", "eval_boxes"],
-    "train":     ["latest_checkpoint", "warn_if_nothing_will_be_saved",
-                  "build_training_arguments"],
-    "results":   ["render"],
-    "preflight": ["check_model"],
-    "infer":     ["run"],
-    "boxes":     ["to_canvas", "greedy_match"],
+    "modeling":  ["def load_base_model", "def disable_broken_peft_dispatchers",
+                  "def adapt_training_kwargs", "def language_side_targets"],
+    "evaluate":  ["def diagnose_predictions", "def load_predictions",
+                  "def eval_boxes"],
+    "train":     ["def latest_checkpoint", "def warn_if_nothing_will_be_saved",
+                  "def build_training_arguments"],
+    "losses":    ["self.to(logits.device)"],
+    "results":   ["def render"],
+    "preflight": ["def check_model"],
+    "infer":     ["def run"],
+    "boxes":     ["def to_canvas", "def greedy_match"],
 }
 
-def missing_functions(root):
+def missing_markers(root):
     """Which of NEEDS a copy of the package under `root` does not have."""
     gone = []
-    for mod, funcs in NEEDS.items():
+    for mod, markers in NEEDS.items():
         path = os.path.join(root, "vindr_cxr_vqa", mod + ".py")
         if not os.path.exists(path):
             gone.append(f"{mod}.py is missing entirely")
             continue
         src = open(path, encoding="utf-8").read()
-        gone += [f"{mod}.{fn}()" for fn in funcs if f"def {fn}" not in src]
+        gone += [f"{mod}.py: {m}" for m in markers if m not in src]
     return gone
 
 # The code, the built JSONL and the images may live in one input or in two.
@@ -214,7 +220,7 @@ if BUNDLE:
     CODE_ROOT = BUNDLE
 else:
     roots = locate("vindr_cxr_vqa", "code")
-    CODE_ROOT = next((r for r in roots if not missing_functions(r)), roots[0])
+    CODE_ROOT = next((r for r in roots if not missing_markers(r)), roots[0])
     if len(roots) > 1:
         print(f"{len(roots)} attached inputs carry vindr_cxr_vqa/; "
               f"chose {CODE_ROOT}")
@@ -248,7 +254,7 @@ print(sorted(os.listdir(WORK)))
 # This re-checks the writable copy rather than CODE_ROOT, so a half-finished
 # copy is caught too -- and it is the only report when BUNDLE was set by hand
 # or when no attached input is current.
-stale = missing_functions(WORK)
+stale = missing_markers(WORK)
 if stale:
     raise SystemExit(
         "The attached code is OUT OF DATE. Missing:\\n  "
