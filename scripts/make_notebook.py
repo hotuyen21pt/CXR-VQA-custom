@@ -83,8 +83,8 @@ BUNDLE = ""
 IMAGES = ""
 # ---------------------------------------------------------------------------
 
-def find_input(marker, root="/kaggle/input", max_depth=6):
-    """Shallowest attached directory containing `marker`.
+def find_inputs(marker, root="/kaggle/input", max_depth=6):
+    """Every attached directory containing `marker`, shallowest first.
 
     Kaggle nests inputs differently depending on how they were attached
     (/kaggle/input/<slug> for some, /kaggle/input/datasets/<user>/<slug> or
@@ -101,13 +101,59 @@ def find_input(marker, root="/kaggle/input", max_depth=6):
         if os.path.exists(os.path.join(dirpath, marker)):
             hits.append(dirpath)
             dirnames[:] = []
-    return sorted(hits, key=len)[0] if hits else None
+    return sorted(hits, key=len)
+
+def find_input(marker, **kw):
+    hits = find_inputs(marker, **kw)
+    return hits[0] if hits else None
 
 def attached():
     return sorted(glob.glob("/kaggle/input/*/") + glob.glob("/kaggle/input/*/*/"))
 
+# Checking that the .py files merely exist is not enough: an attached dataset
+# can carry an older copy of a module that is present but missing a fix, and
+# the failure then surfaces an hour later as a traceback from deep inside a
+# library. So check for the specific functions each fix introduced.
+NEEDS = {
+    "modeling":  ["load_base_model", "disable_broken_peft_dispatchers",
+                  "adapt_training_kwargs"],
+    "evaluate":  ["diagnose_predictions", "load_predictions", "eval_boxes"],
+    "train":     ["latest_checkpoint", "warn_if_nothing_will_be_saved",
+                  "build_training_arguments"],
+    "results":   ["render"],
+    "preflight": ["check_model"],
+    "infer":     ["run"],
+    "boxes":     ["to_canvas", "greedy_match"],
+}
+
+def missing_functions(root):
+    """Which of NEEDS a copy of the package under `root` does not have."""
+    gone = []
+    for mod, funcs in NEEDS.items():
+        path = os.path.join(root, "vindr_cxr_vqa", mod + ".py")
+        if not os.path.exists(path):
+            gone.append(f"{mod}.py is missing entirely")
+            continue
+        src = open(path, encoding="utf-8").read()
+        gone += [f"{mod}.{fn}()" for fn in funcs if f"def {fn}" not in src]
+    return gone
+
 # The code, the built JSONL and the images may live in one input or in two.
-CODE_ROOT = BUNDLE or find_input("vindr_cxr_vqa")
+#
+# Two attached inputs can both carry vindr_cxr_vqa/ -- an older full bundle
+# next to a freshly uploaded code-only dataset -- and picking by path length
+# alone is a coin flip between them. So prefer whichever copy actually has the
+# functions this notebook needs. When none does, keep the shallowest, so the
+# report below names what is missing rather than running yesterday's code.
+if BUNDLE:
+    CODE_ROOT = BUNDLE
+else:
+    roots = find_inputs("vindr_cxr_vqa")
+    CODE_ROOT = next((r for r in roots if not missing_functions(r)),
+                     roots[0] if roots else None)
+    if len(roots) > 1:
+        print(f"{len(roots)} attached inputs carry vindr_cxr_vqa/; "
+              f"chose {CODE_ROOT}")
 if not CODE_ROOT:
     raise SystemExit("No attached input contains vindr_cxr_vqa/.\\n"
                      f"Attached: {attached()}")
@@ -145,32 +191,10 @@ print("\\ncwd:", os.getcwd())
 print(sorted(os.listdir(WORK)))
 
 # Fail now, clearly, if the attached code predates what this notebook needs.
-#
-# Checking that the .py files merely exist is not enough: an attached dataset
-# can carry an older copy of a module that is present but missing a fix, and
-# the failure then surfaces an hour later as a traceback from deep inside a
-# library. So check for the specific functions each fix introduced.
-NEEDS = {
-    "modeling":  ["load_base_model", "disable_broken_peft_dispatchers",
-                  "adapt_training_kwargs"],
-    "evaluate":  ["diagnose_predictions", "load_predictions", "eval_boxes"],
-    "train":     ["latest_checkpoint", "warn_if_nothing_will_be_saved",
-                  "build_training_arguments"],
-    "results":   ["render"],
-    "preflight": ["check_model"],
-    "infer":     ["run"],
-    "boxes":     ["to_canvas", "greedy_match"],
-}
-stale = []
-for mod, funcs in NEEDS.items():
-    path = os.path.join(WORK, "vindr_cxr_vqa", mod + ".py")
-    if not os.path.exists(path):
-        stale.append(f"{mod}.py is missing entirely")
-        continue
-    src = open(path, encoding="utf-8").read()
-    for fn in funcs:
-        if f"def {fn}" not in src:
-            stale.append(f"{mod}.{fn}()")
+# This re-checks the writable copy rather than CODE_ROOT, so a half-finished
+# copy is caught too -- and it is the only report when BUNDLE was set by hand
+# or when no attached input is current.
+stale = missing_functions(WORK)
 if stale:
     raise SystemExit(
         "The attached code is OUT OF DATE. Missing:\\n  "
