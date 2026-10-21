@@ -22,7 +22,8 @@ from transformers import AutoProcessor, Trainer, TrainingArguments
 from .config import load_config
 from .data import MedGemmaCollator, VinDrCXRVQADataset, digit_token_ids
 from .losses import SoftBoxGIoULoss, gather_digit_logits, multitask_loss
-from .modeling import disable_broken_peft_dispatchers, load_base_model
+from .modeling import (accepted_arguments, adapt_training_kwargs,
+                       disable_broken_peft_dispatchers, load_base_model)
 
 
 class MultiTaskTrainer(Trainer):
@@ -100,6 +101,22 @@ def load_model(cfg) -> tuple[object, bool]:
     return model, used_4bit
 
 
+def build_training_arguments(**kwargs) -> TrainingArguments:
+    """``TrainingArguments(**kwargs)``, reconciled with this transformers.
+
+    The 5.x line kept renaming and retiring arguments -- 5.15 dropped
+    ``warmup_ratio`` outright -- and a keyword this version has never heard of
+    is a TypeError, raised only once the weights are already on the GPU. So
+    the names are checked against the real signature first, and every
+    substitution is printed.
+    """
+    kwargs, notes = adapt_training_kwargs(
+        kwargs, accepted_arguments(TrainingArguments.__init__))
+    for note in notes:
+        print(f"[train] {note}")
+    return TrainingArguments(**kwargs)
+
+
 def latest_checkpoint(out_dir: str) -> str | None:
     """Newest ``checkpoint-N`` directory under ``out_dir``, by step number."""
     if not os.path.isdir(out_dir):
@@ -173,7 +190,7 @@ def main() -> None:
 
     bf16 = (cfg.train.precision == "bf16"
             or (cfg.train.precision == "auto" and torch.cuda.is_bf16_supported()))
-    targs = TrainingArguments(
+    targs = build_training_arguments(
         output_dir=out_dir,
         num_train_epochs=cfg.train.epochs,
         max_steps=args.max_steps,

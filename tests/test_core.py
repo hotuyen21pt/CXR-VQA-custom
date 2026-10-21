@@ -375,6 +375,63 @@ def test_the_floor_is_the_one_preflight_reports():
 
 
 # --------------------------------------------------------------------------
+# TrainingArguments compatibility
+#
+# transformers 5.15 removed warmup_ratio; the fake signatures below stand in
+# for a 4.x and a 5.x install so the reconciliation is testable anywhere.
+# --------------------------------------------------------------------------
+def _transformers_4x(output_dir, learning_rate=0.0, warmup_ratio=0.0,
+                     warmup_steps=0, fp16=False):
+    pass
+
+
+def _transformers_5x(output_dir, learning_rate=0.0, warmup_steps=0,
+                     fp16=False):
+    pass
+
+
+def test_accepted_arguments_reads_the_signature():
+    assert modeling.accepted_arguments(_transformers_5x) == {
+        "output_dir", "learning_rate", "warmup_steps", "fp16"}
+
+
+def test_a_catch_all_signature_means_anything_goes():
+    assert modeling.accepted_arguments(lambda **kw: None) is None
+
+
+def test_old_transformers_keeps_warmup_ratio():
+    kwargs, notes = modeling.adapt_training_kwargs(
+        {"output_dir": "o", "warmup_ratio": 0.03},
+        modeling.accepted_arguments(_transformers_4x))
+    assert kwargs == {"output_dir": "o", "warmup_ratio": 0.03}
+    assert notes == []
+
+
+def test_new_transformers_gets_the_ratio_as_warmup_steps():
+    """5.15 folded the ratio into warmup_steps, which now takes a float."""
+    kwargs, notes = modeling.adapt_training_kwargs(
+        {"output_dir": "o", "warmup_ratio": 0.03},
+        modeling.accepted_arguments(_transformers_5x))
+    assert kwargs == {"output_dir": "o", "warmup_steps": 0.03}
+    assert len(notes) == 1 and "warmup_steps=0.03" in notes[0]
+
+
+def test_an_explicit_warmup_steps_is_not_overwritten():
+    kwargs, _ = modeling.adapt_training_kwargs(
+        {"warmup_ratio": 0.03, "warmup_steps": 100},
+        modeling.accepted_arguments(_transformers_5x))
+    assert kwargs == {"warmup_steps": 100}
+
+
+def test_an_unknown_argument_is_dropped_loudly_instead_of_raising():
+    kwargs, notes = modeling.adapt_training_kwargs(
+        {"output_dir": "o", "tpu_num_cores": 8},
+        modeling.accepted_arguments(_transformers_5x))
+    assert kwargs == {"output_dir": "o"}
+    assert len(notes) == 1 and "WARNING" in notes[0] and "tpu_num_cores" in notes[0]
+
+
+# --------------------------------------------------------------------------
 # final results rendering
 # --------------------------------------------------------------------------
 def _eval_json(f1: float, miou: float) -> dict:

@@ -166,3 +166,56 @@ def load_base_model(cfg, load_in_4bit: bool | None = None):
     print(f"[model] dtype={dtype}, 4-bit={used_4bit}, "
           f"vram={gpu_memory_gb():.0f} GB")
     return model, used_4bit
+
+
+# --------------------------------------------------------------------------
+# TrainingArguments across the 4.x / 5.x split
+# --------------------------------------------------------------------------
+#: Arguments transformers dropped, and the name that took the job over.
+#: 5.15 removed ``warmup_ratio``: ``warmup_steps`` now accepts a float in
+#: [0, 1) and reads it as a fraction of the schedule, which is exactly what
+#: the old argument meant. Older releases keep both, so the ratio has to be
+#: handed to whichever name the installed version actually has.
+TRAINING_ARG_RENAMES = {"warmup_ratio": "warmup_steps"}
+
+
+def accepted_arguments(func) -> set[str] | None:
+    """Keyword names ``func(...)`` takes, or ``None`` when it takes ``**kwargs``."""
+    import inspect
+    try:
+        params = inspect.signature(func).parameters.values()
+    except (TypeError, ValueError):
+        return None
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return None
+    return {p.name for p in params
+            if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                          inspect.Parameter.KEYWORD_ONLY)}
+
+
+def adapt_training_kwargs(kwargs: dict, accepted: set[str] | None):
+    """Fit ``TrainingArguments`` kwargs to the installed transformers.
+
+    Renamed arguments move to their new name; anything this version has no
+    home for at all is dropped rather than raising, so a run that is already
+    an hour in does not die on a keyword. Returns ``(kwargs, notes)``, where
+    the notes are lines the caller should print -- a silent drop would quietly
+    change how the model trains.
+    """
+    if accepted is None:
+        return dict(kwargs), []
+
+    out, notes = {}, []
+    for name, value in kwargs.items():
+        if name in accepted:
+            out[name] = value
+            continue
+        new = TRAINING_ARG_RENAMES.get(name)
+        if new and new in accepted and new not in kwargs:
+            out[new] = value
+            notes.append(f"this transformers has no {name}; passing it as "
+                         f"{new}={value!r} instead")
+        else:
+            notes.append(f"WARNING: this transformers does not accept "
+                         f"{name}={value!r}; dropping it")
+    return out, notes
