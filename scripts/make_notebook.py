@@ -103,12 +103,77 @@ def find_inputs(marker, root="/kaggle/input", max_depth=6):
             dirnames[:] = []
     return sorted(hits, key=len)
 
-def find_input(marker, **kw):
-    hits = find_inputs(marker, **kw)
-    return hits[0] if hits else None
+def tree(root="/kaggle/input", max_depth=4, limit=40):
+    """What is actually attached, files included.
 
-def attached():
-    return sorted(glob.glob("/kaggle/input/*/") + glob.glob("/kaggle/input/*/*/"))
+    Two levels of directory names say nothing about why a search failed --
+    an un-extracted zip and a dataset that was never attached look identical.
+    Showing the files tells the two apart at a glance.
+    """
+    lines, seen, base = [], 0, root.rstrip("/").count("/")
+    for dirpath, dirnames, filenames in os.walk(root):
+        depth = dirpath.count("/") - base
+        if depth >= max_depth:
+            dirnames[:] = []
+        # Never list the image tree; there are thousands of files.
+        dirnames[:] = [d for d in dirnames if d != "train"]
+        lines.append("  " * depth + (os.path.basename(dirpath) or root) + "/")
+        for name in sorted(filenames)[:5]:
+            lines.append("  " * (depth + 1) + name)
+        if len(filenames) > 5:
+            lines.append("  " * (depth + 1) + f"… {len(filenames) - 5} file khác")
+        seen += 1
+        if seen >= limit:
+            lines.append("  …")
+            break
+    return "\\n".join(lines)
+
+def unpack(marker, dest="/kaggle/working/unpacked"):
+    """Extract an attached .zip that carries `marker`, if one is still zipped.
+
+    Uploading a bundle through the Kaggle UI usually extracts it, but not
+    always -- and a dataset left as a single .zip is indistinguishable from
+    one that was never attached. Rather than stop on a zip holding exactly
+    what is being looked for, unpack it into the writable tree and go on.
+    """
+    import zipfile
+    for dirpath, dirnames, filenames in os.walk("/kaggle/input"):
+        dirnames[:] = [d for d in dirnames if d != "train"]
+        for name in filenames:
+            if not name.endswith(".zip"):
+                continue
+            path = os.path.join(dirpath, name)
+            try:
+                with zipfile.ZipFile(path) as z:
+                    inside = z.namelist()
+                    if not any(n.startswith(marker) for n in inside):
+                        continue
+                    out = os.path.join(dest, os.path.splitext(name)[0])
+                    # Code and JSONL ride in the same bundle, so this is
+                    # reached twice; unpack it once.
+                    if os.path.exists(os.path.join(out, marker)):
+                        return out
+                    print(f"{path} chưa được giải nén; đang bung "
+                          f"{len(inside)} file -> {out}")
+                    z.extractall(out)
+                    return out
+            except zipfile.BadZipFile:
+                continue
+    return None
+
+def locate(marker, what):
+    """Every input holding `marker`, unpacking a stray zip if that is all there is."""
+    hits = find_inputs(marker)
+    if hits:
+        return hits
+    out = unpack(marker)
+    if out:
+        return find_inputs(marker, root=out)
+    raise SystemExit(
+        f"Không input nào chứa {marker} ({what}).\\n\\n"
+        f"Đang attach:\\n{tree()}\\n\\n"
+        "Kiểm tra: dataset đã attach chưa, đã trỏ sang version mới nhất chưa, "
+        "và Kaggle đã giải nén file .zip chưa.")
 
 # Checking that the .py files merely exist is not enough: an attached dataset
 # can carry an older copy of a module that is present but missing a fix, and
@@ -148,25 +213,14 @@ def missing_functions(root):
 if BUNDLE:
     CODE_ROOT = BUNDLE
 else:
-    roots = find_inputs("vindr_cxr_vqa")
-    CODE_ROOT = next((r for r in roots if not missing_functions(r)),
-                     roots[0] if roots else None)
+    roots = locate("vindr_cxr_vqa", "code")
+    CODE_ROOT = next((r for r in roots if not missing_functions(r)), roots[0])
     if len(roots) > 1:
         print(f"{len(roots)} attached inputs carry vindr_cxr_vqa/; "
               f"chose {CODE_ROOT}")
-if not CODE_ROOT:
-    raise SystemExit("No attached input contains vindr_cxr_vqa/.\\n"
-                     f"Attached: {attached()}")
 
-PROCESSED_ROOT = find_input("data/processed/train.jsonl")
-IMAGES_ROOT = IMAGES or find_input("dataset/train_data/train")
-if not PROCESSED_ROOT:
-    raise SystemExit("No attached input contains data/processed/train.jsonl.\\n"
-                     f"Attached: {attached()}")
-if not IMAGES_ROOT:
-    raise SystemExit("No attached input contains dataset/train_data/train/.\\n"
-                     "Attach the images part of the bundle.\\n"
-                     f"Attached: {attached()}")
+PROCESSED_ROOT = locate("data/processed/train.jsonl", "JSONL đã build")[0]
+IMAGES_ROOT = IMAGES or locate("dataset/train_data/train", "ảnh X-quang")[0]
 
 print("code     :", CODE_ROOT)
 print("jsonl    :", PROCESSED_ROOT)
