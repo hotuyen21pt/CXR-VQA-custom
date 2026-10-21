@@ -151,9 +151,11 @@ print(sorted(os.listdir(WORK)))
 # the failure then surfaces an hour later as a traceback from deep inside a
 # library. So check for the specific functions each fix introduced.
 NEEDS = {
-    "modeling":  ["load_base_model", "disable_broken_peft_dispatchers"],
+    "modeling":  ["load_base_model", "disable_broken_peft_dispatchers",
+                  "adapt_training_kwargs"],
     "evaluate":  ["diagnose_predictions", "load_predictions", "eval_boxes"],
-    "train":     ["latest_checkpoint", "warn_if_nothing_will_be_saved"],
+    "train":     ["latest_checkpoint", "warn_if_nothing_will_be_saved",
+                  "build_training_arguments"],
     "results":   ["render"],
     "preflight": ["check_model"],
     "infer":     ["run"],
