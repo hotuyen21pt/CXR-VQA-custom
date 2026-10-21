@@ -149,6 +149,53 @@ pixel gốc        691, 1375, 1653, 1831      (hệ của gt_location)
 chuẩn hoá 0-999  332, 588, 794, 783         (hệ dùng để train)
 ```
 
+### Mỗi hệ toạ độ dùng để làm gì
+
+Ảnh này gốc **2080 × 2336**, file PNG trên đĩa **224 × 224**.
+
+**Hệ 1 — pixel gốc.** Hệ của ảnh DICOM nguyên bản, cũng là hệ mà HF công bố
+`gt_location` và là hệ của `annotations_train.csv`. Đây là *sự thật gốc*: mọi
+phép so với ground truth cuối cùng đều quy về đây. Nhược điểm là mỗi ảnh một
+kích thước, nên `691` ở ảnh này và `691` ở ảnh khác không cùng nghĩa.
+
+**Hệ 2 — 224×224.** Hệ của file PNG thật sự nằm trên đĩa. `resize_factors.csv`
+cho hệ số:
+
+```
+fx = 0,107692 = 224 / 2080          691  × 0,107692 = 74,42
+fy = 0,095890 = 224 / 2336          1375 × 0,095890 = 131,85
+```
+
+Dùng khi cần vẽ box lên đúng file ảnh (`visualize.py`), hoặc khi cần biết tổn
+thương nằm ở đâu trên bức ảnh mô hình thực sự nhìn thấy. Chú ý `fx ≠ fy`: ảnh
+gốc không vuông mà bị bóp về vuông, nên phải nhân hai hệ số khác nhau — dùng
+một tỉ lệ chung cho cả hai trục là box méo.
+
+**Hệ 3 — chuẩn hoá 0–999.** Hệ dùng để huấn luyện:
+
+```
+691  × 999/2080 = 331,88 → 332      1653 × 999/2080 = 794,05 → 794
+1375 × 999/2336 = 588,02 → 588      1831 × 999/2336 = 783,03 → 783
+```
+
+Hai lý do bắt buộc phải có hệ này:
+
+- **Độ rộng cố định 3 chữ số.** `<loc_332_588_794_783>` luôn đúng 4 nhóm × 3
+  chữ số. `SoftBoxGIoULoss` (chặng 5) phải biết *chính xác* chữ số thứ mấy
+  trong chuỗi là toạ độ nào để bốc logits ra tính IoU khả vi. Pixel gốc thì lúc
+  3 chữ số lúc 4 (`691` so với `1375`), vị trí token xô lệch theo từng mẫu, và
+  soft-IoU không gióng hàng được nữa.
+- **Độc lập kích thước ảnh.** `332` nghĩa là "33% chiều ngang lồng ngực" ở mọi
+  bức ảnh. Mô hình học vị trí giải phẫu, không học thuộc pixel của từng tấm.
+
+### Vì sao lưu sẵn cả ba thay vì tính lúc cần
+
+Mỗi chặng dùng một hệ khác nhau: train dùng hệ 3, vẽ hình dùng hệ 2, chấm điểm
+so với ground truth dùng hệ 1. Chuyển qua lại cần `width`/`height`/`fx`/`fy`
+**của đúng ảnh đó**. Tính lại ở chặng sau mà vớ nhầm kích thước của ảnh khác
+thì box lệch vài trăm pixel *mà không có lỗi nào bắn ra* — IoU tụt và không ai
+biết tại sao. Lưu sẵn cả ba là mua sự chắc chắn bằng vài chục byte mỗi dòng.
+
 ### Chặng 2b — khi nhãn và box **không khớp** (60% dataset)
 
 Bản ghi trên là ca **tốt**. Đây là ca xấu, ảnh `051132a778e61a86eb147c7c6f564dfe`:
@@ -159,22 +206,75 @@ gt_finding            Cardiomegaly
 gt_location           <loc_1264_743_1611_1019>      ← box được công bố
 ```
 
-Đối chiếu với các box thật của ảnh đó:
+Đối chiếu với **toàn bộ 7 box thô** của ảnh đó — ảnh này cũng được ba bác sĩ
+đọc độc lập:
 
 ```
-  Cardiomegaly        [ 952 1318 2034 1724]   IoU với box công bố = 0,00
-  Cardiomegaly        [ 948 1267 2063 1672]   IoU = 0,00
-  Cardiomegaly        [ 962 1331 2035 1625]   IoU = 0,00
-  Aortic enlargement  [1265  744 1611 1019]   IoU = 0,99  ←── ĐÂY MỚI LÀ NÓ
-  Aortic enlargement  [1306  731 1614 1066]   IoU = 0,73
-  Pleural thickening  [1593  452 1804  604]   IoU = 0,00
+  Cardiomegaly        R10  [ 952 1318 2034 1724]   IoU với box công bố = 0,00
+  Cardiomegaly        R8   [ 948 1267 2063 1672]   IoU = 0,00
+  Cardiomegaly        R9   [ 962 1331 2035 1625]   IoU = 0,00
+  Aortic enlargement  R10  [1265  744 1611 1019]   IoU = 0,99  ←── ĐÂY MỚI LÀ NÓ
+  Aortic enlargement  R8   [1306  731 1614 1066]   IoU = 0,73
+  Aortic enlargement  R9   [1276  730 1613 1067]   IoU = 0,79
+  Pleural thickening  R9   [1593  452 1804  604]   IoU = 0,00
 ```
 
 Nhãn ghi **Cardiomegaly** nhưng box được công bố chính là box **Aortic
-enlargement** — IoU với mọi box Cardiomegaly thật đều bằng **0,00**. Nếu train
-thẳng, mô hình học chỉ vào động mạch chủ mỗi khi nghe "tim to".
+enlargement của bác sĩ R10** — IoU 0,99, chênh 0,01 chỉ do làm tròn. IoU với
+mọi box Cardiomegaly thật đều bằng **0,00**: hai vùng này cách xa nhau thật
+sự, tim to nằm ở giữa–dưới lồng ngực (y ≈ 1300–1700) còn quai động mạch chủ ở
+trên (y ≈ 730–1050), không chồng lấn một pixel nào.
 
-`repair_box()` khôi phục mối nối:
+Nếu train thẳng, mô hình học chỉ vào động mạch chủ mỗi khi nghe "tim to" — sai
+về y khoa, và sai một cách *nhất quán* nên nó học rất nhanh.
+
+#### Vì sao hỏng: pipeline ghép nhầm hai danh sách
+
+VinDr-CXR-VQA được sinh tự động. Khi tạo câu hỏi cho một ảnh, pipeline lấy
+**danh sách bệnh lý** và **danh sách box** của ảnh đó rồi ghép lại — nhưng ghép
+*độc lập*, không kiểm tra box có thuộc đúng bệnh lý không. Nên `gt_location`
+gần như luôn là một box thật của bác sĩ trên đúng ảnh đó, chỉ là **của lớp
+khác**. Tỉ lệ 60% lấy từ `data/processed/build_summary.json`:
+
+```
+box_label_consistent    7 043
+box_label_mismatch     10 554      ← 10.554 / 17.597 = 60,0%
+```
+
+#### `repair_box()` nối lại — bốn bước
+
+**1. Box công bố có đúng là box của `gt_finding` không?** So với box **thô**
+(chưa gộp), vì bản release copy từ đó ra. Ở đây box công bố trùng một box
+*Aortic enlargement*, không trùng box *Cardiomegaly* nào → không nhất quán.
+
+**2. Gộp các lần đọc trùng nhau** (`fuse_boxes`, giống chặng 1):
+
+```
+  Cardiomegaly        votes=3  [ 954 1305 2044 1674]   IoU = 0,00
+  Aortic enlargement  votes=3  [1282  735 1613 1051]   IoU = 0,83
+  Pleural thickening  votes=1  [1593  452 1804  604]   IoU = 0,00
+```
+
+Box Cardiomegaly đồng thuận là **trung bình cộng** ba lần đọc:
+
+```
+x_min: (952,06 + 948,38 + 962,09) / 3 = 954,18
+y_min: (1317,80 + 1267,42 + 1331,01) / 3 = 1305,41
+x_max: (2033,72 + 2063,35 + 2035,49) / 3 = 2044,19
+y_max: (1723,94 + 1672,18 + 1624,95) / 3 = 1673,69
+```
+
+Trung bình chứ không phải **hợp** (union): hợp sẽ phình box ra bằng phần tử
+lớn nhất của cả ba, còn trung bình cho ước lượng tốt nhất về ranh giới thật.
+`votes` cho biết mấy bác sĩ đồng ý — đó là cơ sở để tin box nào.
+
+**3. Chọn ứng viên chồng lấn nhiều nhất với box công bố.** Ở đây IoU = 0,00,
+không có gì để bám → `method = "consensus"` (bỏ hẳn box công bố, lấy box đồng
+thuận mạnh nhất của `gt_finding`). Nếu box công bố có chồng lấn *một phần* —
+lệch nhưng vẫn trúng vùng tim — thì `method = "best_iou"`, tức tin box công bố
+đủ để nó định hướng chọn đúng tổn thương.
+
+**4. Ghi kết quả:**
 
 ```
 box_label_consistent   False
@@ -182,8 +282,27 @@ repair_method          consensus
 gt_location_fixed      <loc_954_1305_2044_1674>   ← box Cardiomegaly đồng thuận, 3/3 phiếu
 ```
 
-Record giữ **cả hai**: bản công bố để tái lập paper, bản sửa để huấn luyện.
-Chọn bằng `data.box_source` trong config. Chi tiết:
+#### Bốn kiểu `repair_method` và tần suất thật
+
+| method | nghĩa | số bản ghi |
+| --- | --- | ---: |
+| `published` | box công bố vốn đã đúng | 7.043 |
+| `consensus` | không chồng lấn → lấy box đồng thuận | 8.008 |
+| `best_iou` | có chồng lấn → giữ box cùng lớp trùng nhất | 2.546 |
+| `unavailable` | ảnh không có box nào của `gt_finding` | 0 |
+
+Cộng lại đúng 17.597 cặp QA.
+
+#### Giữ cả hai bản
+
+Record lưu song song `gt_location` (bản công bố) và `gt_location_fixed` (bản đã
+nối lại), chọn bằng `data.box_source` trong `configs/default.yaml`:
+
+- `published` — tái lập đúng paper, kể cả phần sai
+- `fixed` — **mặc định của repo này**, dùng để huấn luyện thật
+
+Giữ cả hai nghĩa là so sánh được "số của paper" và "số đúng" trên cùng một lần
+chạy, thay vì phải chọn một trong hai ngay từ lúc build dataset. Chi tiết:
 [DATA_NOTES.md](DATA_NOTES.md).
 
 ---
