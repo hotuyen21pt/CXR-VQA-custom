@@ -116,7 +116,7 @@ def attached():
 # library. So check for the specific functions each fix introduced.
 NEEDS = {
     "modeling":  ["load_base_model", "disable_broken_peft_dispatchers",
-                  "adapt_training_kwargs"],
+                  "adapt_training_kwargs", "language_side_targets"],
     "evaluate":  ["diagnose_predictions", "load_predictions", "eval_boxes"],
     "train":     ["latest_checkpoint", "warn_if_nothing_will_be_saved",
                   "build_training_arguments"],

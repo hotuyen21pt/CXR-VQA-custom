@@ -50,10 +50,15 @@ model:
   torch_dtype: auto            # bf16 on Ampere+, fp16 on T4/P100
 
 lora:
-  # Section 3.1: r=16, alpha=32, dropout=0.1, ~0.21% trainable (8.9M params).
+  # Section 3.1: r=16, alpha=32, dropout=0.1.
   r: 16
   alpha: 32
   dropout: 0.1
+  # The paper's "8.9M trainable (0.21%)" is attention only, on the language
+  # model: 16 * (2560+2048 + 2560+1024 + 2560+1024 + 2048+2560) * 34 layers is
+  # exactly 8,912,896. Adding the three MLP projections below takes it to
+  # 29,802,496 (0.69%) -- more capacity, but no longer the paper's number.
+  # Drop gate/up/down_proj to reproduce Section 3.1 exactly.
   target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
   # Keep the vision tower frozen; the paper adapts the language side only.
   freeze_vision_tower: true

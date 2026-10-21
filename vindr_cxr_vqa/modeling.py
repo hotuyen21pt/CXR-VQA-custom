@@ -219,3 +219,33 @@ def adapt_training_kwargs(kwargs: dict, accepted: set[str] | None):
             notes.append(f"WARNING: this transformers does not accept "
                          f"{name}={value!r}; dropping it")
     return out, notes
+
+
+# --------------------------------------------------------------------------
+# Which modules LoRA is allowed to wrap
+# --------------------------------------------------------------------------
+#: Submodules that belong to the image encoder rather than the language model.
+VISION_PREFIXES = ("vision_tower", "multi_modal_projector")
+
+
+def language_side_targets(module_names, suffixes, exclude=VISION_PREFIXES):
+    """Fully-qualified LoRA targets, with the image encoder left out.
+
+    peft matches ``target_modules`` by suffix, so a bare ``q_proj`` also wraps
+    every attention block of the siglip vision tower. Those adapters are
+    created *after* the freeze loop has run, which quietly makes the tower
+    trainable again -- and a trainable tower is one whose activations must all
+    be kept for the backward pass. With eager attention at batch 4 that is a
+    4 GiB attention map per layer across 27 layers, which is what filled a
+    95 GB card at step 0.
+
+    (Only q/k/v leaked, not the output projection: siglip calls that one
+    ``out_proj``, so ``o_proj`` never matched it.)
+
+    Resolving the names here rather than relying on peft's matching rules
+    keeps the decision visible, and behaves the same on every peft version.
+    """
+    wanted = set(suffixes)
+    return [name for name in module_names
+            if name.rsplit(".", 1)[-1] in wanted
+            and not any(p in name for p in exclude)]

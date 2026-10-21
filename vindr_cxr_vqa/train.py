@@ -22,8 +22,9 @@ from transformers import AutoProcessor, Trainer, TrainingArguments
 from .config import load_config
 from .data import MedGemmaCollator, VinDrCXRVQADataset, digit_token_ids
 from .losses import SoftBoxGIoULoss, gather_digit_logits, multitask_loss
-from .modeling import (accepted_arguments, adapt_training_kwargs,
-                       disable_broken_peft_dispatchers, load_base_model)
+from .modeling import (VISION_PREFIXES, accepted_arguments,
+                       adapt_training_kwargs, disable_broken_peft_dispatchers,
+                       language_side_targets, load_base_model)
 
 
 class MultiTaskTrainer(Trainer):
@@ -85,14 +86,32 @@ def load_model(cfg) -> tuple[object, bool]:
             if "vision_tower" in name or "multi_modal_projector" in name:
                 param.requires_grad = False
 
+    # Keep the adapters off the vision tower, matching the frozen encoder.
+    # Passing the bare suffixes straight through would not do that: peft
+    # matches by suffix, so they also wrap the vision tower and undo the freeze
+    # above. See modeling.language_side_targets.
+    targets = list(cfg.lora.target_modules)
+    if cfg.lora.freeze_vision_tower:
+        names = [n for n, _ in model.named_modules()]
+        targets = language_side_targets(names, targets)
+        if not targets:
+            raise SystemExit(
+                "[train] no language-side module matched "
+                f"lora.target_modules={list(cfg.lora.target_modules)}.\n"
+                "Check the names against the model: every match was inside "
+                f"{' / '.join(VISION_PREFIXES)}.")
+        skipped = len(language_side_targets(
+            names, cfg.lora.target_modules, exclude=())) - len(targets)
+        print(f"[train] LoRA on {len(targets)} language-side modules; "
+              f"{skipped} vision-tower modules left frozen")
+
     peft_cfg = LoraConfig(
         r=cfg.lora.r,
         lora_alpha=cfg.lora.alpha,
         lora_dropout=cfg.lora.dropout,
-        target_modules=list(cfg.lora.target_modules),
+        target_modules=targets,
         bias="none",
         task_type="CAUSAL_LM",
-        # Keep the adapters off the vision tower, matching the frozen encoder.
         modules_to_save=None,
     )
     disable_broken_peft_dispatchers()

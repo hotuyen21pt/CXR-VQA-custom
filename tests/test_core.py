@@ -423,6 +423,60 @@ def test_an_explicit_warmup_steps_is_not_overwritten():
     assert kwargs == {"warmup_steps": 100}
 
 
+def _gemma3_module_names() -> list[str]:
+    """The module names LoRA has to choose between, as Gemma 3 spells them.
+
+    Shapes and counts are MedGemma-4B's: a 34-layer language model and a
+    27-layer siglip tower whose output projection is called out_proj, not
+    o_proj -- which is why only q/k/v ever leaked into it.
+    """
+    names = []
+    for i in range(34):
+        p = f"language_model.model.layers.{i}"
+        names += [f"{p}.self_attn.{n}" for n in
+                  ("q_proj", "k_proj", "v_proj", "o_proj")]
+        names += [f"{p}.mlp.{n}" for n in
+                  ("gate_proj", "up_proj", "down_proj")]
+    for i in range(27):
+        p = f"vision_tower.vision_model.encoder.layers.{i}"
+        names += [f"{p}.self_attn.{n}" for n in
+                  ("q_proj", "k_proj", "v_proj", "out_proj")]
+        names += [f"{p}.mlp.{n}" for n in ("fc1", "fc2")]
+    names += ["multi_modal_projector.mm_input_projection_weight"]
+    return names
+
+
+SHIPPED_TARGETS = ("q_proj", "k_proj", "v_proj", "o_proj",
+                   "gate_proj", "up_proj", "down_proj")
+
+
+def test_lora_targets_skip_the_vision_tower():
+    picked = modeling.language_side_targets(_gemma3_module_names(),
+                                            SHIPPED_TARGETS)
+    assert len(picked) == 34 * 7
+    assert not any("vision_tower" in n or "multi_modal_projector" in n
+                   for n in picked)
+
+
+def test_the_bare_suffixes_would_have_caught_the_vision_tower():
+    """Why the explicit list exists: peft's suffix match pulls in 81 extra."""
+    leaked = modeling.language_side_targets(_gemma3_module_names(),
+                                            SHIPPED_TARGETS, exclude=())
+    assert len(leaked) - 34 * 7 == 27 * 3  # q/k/v of every siglip layer
+
+
+def test_siglip_out_proj_is_not_mistaken_for_o_proj():
+    picked = modeling.language_side_targets(
+        _gemma3_module_names(), SHIPPED_TARGETS, exclude=())
+    assert not any(n.endswith("out_proj") for n in picked)
+
+
+def test_targets_are_full_paths_so_peft_cannot_re_expand_them():
+    picked = modeling.language_side_targets(_gemma3_module_names(),
+                                            SHIPPED_TARGETS)
+    assert all(n.startswith("language_model.") and "." in n for n in picked)
+
+
 def test_an_unknown_argument_is_dropped_loudly_instead_of_raising():
     kwargs, notes = modeling.adapt_training_kwargs(
         {"output_dir": "o", "tpu_num_cores": 8},
