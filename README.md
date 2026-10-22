@@ -36,16 +36,23 @@ vindr_cxr_vqa/
   results.py                baseline vs fine-tuned, rendered as final tables
   visualize.py              Figure 2 overlays
   preflight.py              check packages, GPU, weights and data before training
+  serve.py                  HTTP backend for the inference UI
+ui/                         React playground: ask one image at a time
 scripts/
   reproduce.py              run every result the paper reports, end to end
   make_kaggle_bundle.py     package repo + data + images into one zip
-  make_notebook.py          regenerate the Kaggle notebook
+  make_notebook.py          regenerate the Kaggle training notebook
+  make_infer_notebook.py    regenerate the Kaggle inference notebook
+  notebook_cells.py         cell sources shared by both notebooks
   fetch_model.py            download MedGemma for offline/air-gapped use
-notebooks/kaggle_train.ipynb
+notebooks/
+  kaggle_train.ipynb        train on Kaggle
+  kaggle_infer.ipynb        run a trained adapter on Kaggle
 docs/  (in Vietnamese)
   PIPELINE.md               one record traced through every stage
   DATA_NOTES.md             what the released data actually contains
   EVALUATION.md             the metrics explained from scratch
+  UI.md                     the inference UI: what to plug in where
 tests/                      pytest, no GPU needed
 ```
 
@@ -309,6 +316,33 @@ Table 3 lists 3,735 + 659 = 4,394 images *and* a 300-image test split, so test
 cannot be a third partition — it is a stratified subset of validation, which is
 also the set Tables 4–6 are computed on. Pass `--disjoint-test` to carve it out
 instead.
+
+---
+
+## Trying the model on one image at a time
+
+The tables score 2,637 answers at once. To watch a single one happen -- the
+answer, the box it drew, the IoU against what the radiologists marked -- there
+is a React UI in `ui/` and an HTTP backend that holds the model:
+
+```bash
+# on the machine with the GPU and the adapter
+python -m vindr_cxr_vqa.serve --adapter outputs/medgemma-lora
+
+# no GPU, no torch: canned answers, so the interface can be checked anywhere
+python -m vindr_cxr_vqa.serve --mock
+```
+
+`--adapter` takes the directory `train.py` wrote, the `medgemma-lora.zip` the
+Kaggle notebook saves, or a single `checkpoint-N`. Omitting it serves the
+zero-shot baseline, so the two rows of Tables 4-6 can be compared by eye.
+
+Build the page once (`cd ui && npm install && npm run build`) and `serve.py`
+hosts it itself at `http://127.0.0.1:8000`; or run `npm run dev` on a laptop
+and point the **Backend** field at a GPU box elsewhere.
+
+**[docs/UI.md](docs/UI.md)** has the full wiring: which training output goes
+into which flag, how to reach a Kaggle session, and what each panel shows.
 
 ---
 
