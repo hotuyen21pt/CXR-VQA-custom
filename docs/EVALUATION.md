@@ -236,16 +236,24 @@ Mỗi ảnh có các box ground truth (trung bình **8,4** cái — ba bác sĩ 
 tự vẽ) và một số box do mô hình sinh ra.
 
 1. Tính IoU cho **mọi cặp** prediction × ground truth.
-2. Ghép **tham lam**: IoU cao nhất trước, mỗi box chỉ dùng một lần.
-3. Cặp ghép có **IoU ≥ 0,3** là một **TP**.
-4. Prediction thừa là **FP** (chỉ vào chỗ sai).
-5. Ground truth thừa là **FN** (tổn thương bị bỏ sót hoàn toàn).
+2. Prediction nào chồng lên **bất kỳ** ground truth nào với **IoU ≥ 0,3** là
+   một **TP** — đúng như câu định nghĩa của Mục 3.2.
+3. Prediction còn lại là **FP** (chỉ vào chỗ sai).
+4. Ground truth mà **không một** prediction nào chạm tới ngưỡng là **FN**
+   (tổn thương bị bỏ sót hoàn toàn).
 
 Rồi áp dụng đúng công thức precision / recall / F1 như Bảng 4.
 
-**Vì sao phải ghép 1-1?** Nếu không, một hình chữ nhật may mắn có thể nhận công
-của ba ground truth chồng lên nhau, và số FN trở nên vô nghĩa. Xem
-`boxes.py:greedy_match`.
+**Không box nào bị "dùng mất".** Hai prediction cùng đè lên một tổn thương thì
+cả hai đều là TP; một ground truth chỉ bị tính FN khi không ai chạm tới nó.
+Hệ quả: TP đếm *prediction* còn FN đếm *ground truth*, nên `TP + FN` không
+còn bằng tổng số box ground truth — bộ chấm vì thế đếm hai tổng này trực
+tiếp thay vì suy ra. Xem `boxes.py:match_any`.
+
+**Biến thể chặt hơn.** `--match greedy` ghép 1-1 theo IoU giảm dần, nên
+prediction thứ hai trên cùng một tổn thương bị hạ thành FP và precision tụt
+xuống. Đây là **một giao thức khác**, không phải bản sửa của paper — đừng
+đặt số của nó cạnh số của paper. Xem `boxes.py:greedy_match`.
 
 **Vì sao ngưỡng 0,3 chứ không phải 0,5?** Paper gọi 0,3 là "độ chồng lấp tối
 thiểu có ý nghĩa lâm sàng" — đủ để chỉ cho bác sĩ đúng vùng cần nhìn, tức mục
@@ -286,7 +294,7 @@ những lần trúng.
 ## 7. Đọc kết quả in ra
 
 ```
-=== preds_val_ft.jsonl  (split=val, space=norm1000, match=greedy) ===
+=== preds_val_ft.jsonl  (split=val, space=norm1000, match=any) ===
 
 Table 4 — VQA (text-based lesion classification)
   Accuracy 0.624   Precision 0.471   Recall 0.926   F1 0.624
@@ -330,16 +338,24 @@ Kết quả mong đợi, và cũng là kết quả repo này in ra thật:
 
 ```
 Table 4   Precision 1.000      mọi bệnh lý được nêu đều thực sự có mặt
+Table 5   Precision 1.000      mọi box phát ra đều là box bác sĩ vẽ
 Table 6   iou_ge_0.5_pct 100.0 mọi box đều rơi trúng tổn thương thật
 ```
 
-Nếu precision không phải 1.000 → phần so khớp văn bản hỏng. Nếu localization
+Nếu precision Bảng 4 không phải 1.000 → phần so khớp văn bản hỏng. Nếu
+precision Bảng 5 không phải 1.000 → phần ghép box hỏng. Nếu localization
 không phải 100% → phần chuyển đổi toạ độ hỏng. **Không cần GPU**, chạy được
 trên laptop bất kỳ.
 
-Recall ở đó **không** phải 1,000 (khoảng 0,29), và điều đó là **đúng**: dataset
-chỉ hỏi về ~4 trong số ~8,4 tổn thương mỗi ảnh, nên dù trả lời hoàn hảo vẫn còn
-phần lớn box ground truth không được ghép.
+> **Chính phép thử này đã quyết định cách ghép box.** Với `--match greedy`,
+> chính bộ đáp án ấy chỉ được precision **0,617** — tức bộ chấm gọi 38% số box
+> do chính bác sĩ vẽ là "bịa ra", chỉ vì nhiều loại câu hỏi cùng hỏi về một tổn
+> thương, và box lặp lại bị thua cuộc ghép 1-1. Một cái cân đã cân sai chính quả
+> cân chuẩn thì không dùng để cân mô hình được.
+
+Recall ở đó **không** phải 1,000 (0,406), và điều đó là **đúng**: dataset chỉ
+hỏi về ~4 trong số ~8,4 tổn thương mỗi ảnh, nên dù trả lời hoàn hảo vẫn còn
+phần lớn box ground truth không ai chạm tới.
 
 Đây cũng là **trần** cho mô hình thật: 2.637 câu hỏi trên 5.561 box ground
 truth → recall box **không thể vượt quá 0,474** với mức giám sát này. Nên con
@@ -373,7 +389,8 @@ một phần hai mươi.
 | Xử lý phủ định | `evaluate.py:_negated` |
 | Bảng 4 | `evaluate.py:eval_vqa` |
 | IoU | `boxes.py:iou` |
-| Ghép 1-1 | `boxes.py:greedy_match` |
+| Ghép prediction với ground truth (Mục 3.2) | `boxes.py:match_any` |
+| Biến thể 1-1, chặt hơn paper | `boxes.py:greedy_match` |
 | Bảng 5 và 6 | `evaluate.py:eval_boxes` |
 | Chẩn đoán định dạng | `evaluate.py:diagnose_predictions` |
 | Tự kiểm tra bộ chấm | `evaluate.py:oracle_predictions` |

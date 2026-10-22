@@ -113,14 +113,15 @@ def greedy_match(
     gts: Sequence[Sequence[float]],
     thr: float = 0.3,
 ) -> tuple[list[tuple[int, int, float]], list[int], list[int]]:
-    """One-to-one greedy matching by descending IoU.
+    """One-to-one greedy matching by descending IoU -- STRICTER than the paper.
 
-    Section 3.2 defines a prediction as a true positive when it overlaps a
-    ground-truth box with IoU >= ``thr``, counts the remaining predictions as
-    false positives and the unmatched ground-truth boxes as false negatives.
-    Matching one-to-one is what makes those two statements consistent: without
-    it, several predictions could claim the same ground-truth box and the FN
-    count would no longer be well defined.
+    Section 3.2 never consumes a ground-truth box when a prediction matches
+    it, so this is not the published protocol.  Here the second prediction
+    over the same lesion is demoted to a false positive, which lowers
+    precision, and TP + FN always equals the number of ground-truth boxes.
+    That arithmetic is the usual detection convention, so the variant stays
+    available as ``--match greedy``; :func:`match_any` is what Section 3.2
+    describes and what ``eval.match`` selects by default.
 
     Returns ``(matches, unmatched_pred_idx, unmatched_gt_idx)`` where each
     match is ``(pred_idx, gt_idx, iou)``.
@@ -152,24 +153,35 @@ def match_any(
     gts: Sequence[Sequence[float]],
     thr: float = 0.3,
 ) -> tuple[list[tuple[int, int, float]], list[int], list[int]]:
-    """Looser variant: a prediction is a TP if it overlaps ANY gt box.
+    """Section 3.2 as published: a prediction is a TP if it overlaps ANY gt box.
 
-    This is the literal reading of the first sentence of Section 3.2 and is
-    selectable via ``--match any`` so the two protocols can be compared.
+        "a predicted box is a true positive (TP) if it overlaps any
+        ground-truth box with IoU >= 0.3, otherwise a false positive (FP).
+        Missed ground-truth boxes are false negatives (FN)."
+
+    Nothing is consumed by a match.  Two predictions over the same lesion are
+    therefore both true positives, and a ground-truth box counts as missed
+    only when NO prediction reaches ``thr`` on it -- not merely when it failed
+    to be some prediction's best overlap.  TP and FN consequently count
+    different things (predictions and ground-truth boxes) and need not add up
+    to the number of ground-truth boxes; callers that report box totals must
+    count them directly.  :func:`greedy_match` is the stricter one-to-one
+    alternative.
+
+    Each true positive is reported against its best-overlapping ground truth,
+    so the mIoU over true positives is the mean of those best overlaps.
     """
     matches: list[tuple[int, int, float]] = []
     unmatched_p: list[int] = []
     hit_g: set[int] = set()
     for i, row in enumerate(iou_matrix(preds, gts)):
-        if not row:
+        hits = [k for k, v in enumerate(row) if v >= thr]
+        if not hits:
             unmatched_p.append(i)
             continue
-        j = max(range(len(row)), key=lambda k: row[k])
-        if row[j] >= thr:
-            matches.append((i, j, row[j]))
-            hit_g.add(j)
-        else:
-            unmatched_p.append(i)
+        j = max(hits, key=lambda k: row[k])
+        matches.append((i, j, row[j]))
+        hit_g.update(hits)
     return matches, unmatched_p, [j for j in range(len(gts)) if j not in hit_g]
 
 

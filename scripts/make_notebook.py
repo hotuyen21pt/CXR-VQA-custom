@@ -201,7 +201,7 @@ NEEDS = {
     "results":   ["def render"],
     "preflight": ["def check_model"],
     "infer":     ["def run"],
-    "boxes":     ["def to_canvas", "def greedy_match"],
+    "boxes":     ["def to_canvas", "def match_any", "def greedy_match"],
 }
 
 def missing_markers(root):

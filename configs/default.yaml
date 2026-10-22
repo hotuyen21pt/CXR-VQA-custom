@@ -105,9 +105,12 @@ eval:
   iou_threshold: 0.3
   good_localization_iou: 0.5
   acceptable_localization_iou: 0.3
-  # greedy — one-to-one matching by descending IoU (default)
-  # any    — a prediction is a TP if it overlaps ANY gt box
-  match: greedy
+  # any    — Section 3.2 as published (default): a prediction is a TP if it
+  #          overlaps ANY ground-truth box at the threshold, and a ground-truth
+  #          box is a FN only when no prediction reaches it
+  # greedy — one-to-one matching by descending IoU. Stricter than the paper:
+  #          a second prediction over the same lesion becomes a FP.
+  match: any
   max_new_tokens: 256
 
 generate:

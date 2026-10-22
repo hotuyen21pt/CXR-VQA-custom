@@ -150,8 +150,19 @@ def eval_vqa(preds_by_image: dict[str, list[str]],
 def eval_boxes(preds_by_image: dict[str, list[str]], index: dict[str, dict],
                thr: float, good: float, acceptable: float,
                space: str, match: str, gt_source: str) -> tuple[dict, dict]:
+    """Table 5 (detection) and Table 6 (per-image localization).
+
+    Under Section 3.2's matching (``match="any"``) a true positive is a
+    PREDICTION that overlaps some ground-truth box and a false negative is a
+    ground-truth box no prediction reached, so ``tp + fn`` is not the number
+    of ground-truth boxes and ``tp + fp`` is the number of predictions only
+    because every prediction is one or the other.  The box totals are
+    therefore counted directly rather than inferred from the confusion
+    counts; under ``match="greedy"`` they come out the same.
+    """
     matcher = greedy_match if match == "greedy" else match_any
     tp = fp = fn = 0
+    n_pred_boxes = n_gt_boxes = 0
     tp_ious: list[float] = []
     all_ious: list[float] = []
     n_good = n_acceptable = 0
@@ -168,6 +179,8 @@ def eval_boxes(preds_by_image: dict[str, list[str]], index: dict[str, dict],
             preds.extend(extract_locs(t))
         preds = to_pixel_space(preds, img, space)
         gts = [tuple(b["bbox_orig"]) for b in img[gt_key]]
+        n_pred_boxes += len(preds)
+        n_gt_boxes += len(gts)
 
         matches, unmatched_p, unmatched_g = matcher(preds, gts, thr)
         tp += len(matches)
@@ -190,7 +203,7 @@ def eval_boxes(preds_by_image: dict[str, list[str]], index: dict[str, dict],
         "precision": round(p, 4), "recall": round(r, 4), "f1": round(f, 4),
         "miou_tp": round(sum(tp_ious) / len(tp_ious), 4) if tp_ious else 0.0,
         "tp": tp, "fp": fp, "fn": fn,
-        "n_predicted_boxes": tp + fp, "n_gt_boxes": tp + fn,
+        "n_predicted_boxes": n_pred_boxes, "n_gt_boxes": n_gt_boxes,
     }
     localization = {
         "n_images": n_images,
@@ -272,7 +285,10 @@ def main() -> None:
                     help="coordinate space of the predicted <loc_...> spans")
     ap.add_argument("--gt-source", default="raw", choices=("raw", "fused"),
                     help="raw reproduces the 5,471 boxes of Section 3.2")
-    ap.add_argument("--match", default=None, choices=("greedy", "any"))
+    ap.add_argument("--match", default=None, choices=("greedy", "any"),
+                    help="any (default) is Section 3.2 as published: a "
+                         "prediction is a TP when it overlaps ANY ground-truth "
+                         "box. greedy is the stricter one-to-one variant.")
     ap.add_argument("--box-source", default=None,
                     choices=("published", "fixed"),
                     help="which ground-truth box the oracle replays")

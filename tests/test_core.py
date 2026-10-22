@@ -82,6 +82,18 @@ def test_match_any_lets_both_predictions_count():
     assert len(matches) == 2 and unmatched_p == []
 
 
+def test_match_any_credits_every_overlapped_gt_not_just_the_best_one():
+    # Section 3.2 calls a ground-truth box a false negative only when it was
+    # MISSED. One prediction covers both lesions past the threshold, so
+    # neither is missed -- even though only the better overlap is reported as
+    # this prediction's match.
+    preds = [(0, 0, 10, 10)]
+    gts = [(0, 0, 10, 10), (0, 0, 9, 10)]       # IoU 1.0 and 0.9
+    matches, unmatched_p, unmatched_g = boxes.match_any(preds, gts, 0.3)
+    assert [j for _, j, _ in matches] == [0]
+    assert unmatched_p == [] and unmatched_g == []
+
+
 def test_greedy_match_respects_threshold():
     matches, unmatched_p, unmatched_g = boxes.greedy_match(
         [(0, 0, 10, 10)], [(9, 9, 19, 19)], 0.3)
@@ -334,6 +346,9 @@ def test_shipped_config_loads_and_matches_the_paper():
     assert cfg.train.epochs == 3
     assert cfg.loss.lambda_bbox == pytest.approx(0.5)
     assert cfg.eval.iou_threshold == pytest.approx(0.3)
+    # Section 3.2 scores a prediction against ANY overlapping box; one-to-one
+    # matching is a stricter protocol than the one the paper published.
+    assert cfg.eval.match == "any"
     # Checkpointing must be fully specified, or train.py cannot build its args.
     assert cfg.train.save_strategy in ("epoch", "steps")
     assert cfg.train.save_steps > 0
@@ -582,6 +597,73 @@ def test_repaired_boxes_belong_to_their_finding():
             bad += 1
     assert checked > 0
     assert bad == 0, f"{bad}/{checked} repaired boxes miss their own class"
+
+
+# --------------------------------------------------------------------------
+# Table 5 -- detection scoring
+# --------------------------------------------------------------------------
+def _one_image_index(gt_boxes):
+    return {"i": {"width": 100, "height": 100,
+                  "boxes_raw": [{"class_name": "Cardiomegaly",
+                                 "bbox_orig": list(b)} for b in gt_boxes]}}
+
+
+def test_detection_follows_section_3_2_for_a_doubly_covered_lesion():
+    from vindr_cxr_vqa.evaluate import eval_boxes
+    # Two predictions land on the first lesion; nothing lands on the second.
+    index = _one_image_index([(0, 0, 10, 10), (50, 50, 60, 60)])
+    preds = {"i": ["<loc_0_0_10_10> and <loc_1_1_11_11>"]}
+    det, _ = eval_boxes(preds, index, 0.3, 0.5, 0.3, "pixel", "any", "raw")
+    # Both overlap a ground-truth box, so both are true positives, and only
+    # the lesion nobody predicted is a false negative.
+    assert (det["tp"], det["fp"], det["fn"]) == (2, 0, 1)
+
+
+def test_detection_reports_the_boxes_that_exist_not_the_tally():
+    from vindr_cxr_vqa.evaluate import eval_boxes
+    index = _one_image_index([(0, 0, 10, 10), (50, 50, 60, 60)])
+    preds = {"i": ["<loc_0_0_10_10> and <loc_1_1_11_11>"]}
+    det, _ = eval_boxes(preds, index, 0.3, 0.5, 0.3, "pixel", "any", "raw")
+    # tp + fn is 3 here, because TP counts predictions and FN counts ground
+    # truth. The reported totals must stay the real counts.
+    assert det["n_predicted_boxes"] == 2 and det["n_gt_boxes"] == 2
+
+
+def test_greedy_is_stricter_than_the_published_protocol():
+    from vindr_cxr_vqa.evaluate import eval_boxes
+    index = _one_image_index([(0, 0, 10, 10), (50, 50, 60, 60)])
+    preds = {"i": ["<loc_0_0_10_10> and <loc_1_1_11_11>"]}
+    det, _ = eval_boxes(preds, index, 0.3, 0.5, 0.3, "pixel", "greedy", "raw")
+    assert (det["tp"], det["fp"], det["fn"]) == (1, 1, 1)
+    assert det["precision"] < 1.0        # the second prediction is punished
+
+
+@needs_build
+def test_replaying_the_answer_key_cannot_produce_a_false_positive():
+    """The grader's own calibration check, on the real validation split.
+
+    Every box the oracle emits is a radiologist's box, so under Section 3.2 --
+    where a prediction is a true positive whenever it overlaps ANY ground-truth
+    box -- not one of them can be a false positive. One-to-one matching scores
+    the same answer key at precision 0.617, because the dataset asks several
+    questions about the same lesion and the repeats lose the match; that is the
+    protocol disagreeing with the data, not the data being wrong.
+    """
+    import json
+
+    from vindr_cxr_vqa.evaluate import (eval_boxes, oracle_predictions,
+                                        read_jsonl)
+    with open(os.path.join(PROCESSED, "images.json"), encoding="utf-8") as fh:
+        index = json.load(fh)
+    records = read_jsonl(os.path.join(PROCESSED, "val.jsonl"))
+    preds = oracle_predictions(records, "fixed")
+
+    det, _ = eval_boxes(preds, index, 0.3, 0.5, 0.3, "pixel", "any", "raw")
+    assert det["precision"] == 1.0, "the answer key scored against itself"
+    assert det["fp"] == 0
+    # Recall stays well under 1.0, and should: the questions only ask about
+    # some of the lesions a radiologist drew.
+    assert 0.3 < det["recall"] < 0.5
 
 
 # --------------------------------------------------------------------------

@@ -433,10 +433,17 @@ python -m vindr_cxr_vqa.evaluate --oracle --split val   # no GPU needed
 ```
 
 This replays the answer key as if it were the model's output. It must give
-VQA precision **1.000** and localization **100%** at IoU ≥ 0.5 — if it does
-not, the grader is broken, not the model. (Recall is ~0.29 there, correctly:
-the dataset only asks about ~4 of the ~8.3 lesions per image, which also caps
-box recall at ~0.48 for any model.)
+VQA precision **1.000**, detection precision **1.000** and localization
+**100%** at IoU ≥ 0.5 — every box it emits is a radiologist's box, so none of
+them can be a false positive. If it does not, the grader is broken, not the
+model. (Box recall is 0.406 there, correctly: the dataset only asks about ~4
+of the ~8.3 lesions per image, which caps box recall at 2,637/5,561 ≈ 0.47 for
+any model.)
+
+That check is what settled the matching protocol. Under `--match greedy` the
+same answer key scores detection precision **0.617** — the grader calling 38%
+of the radiologists' own boxes false positives, because several question types
+ask about one lesion and the repeated box loses the one-to-one race.
 
 ### If the box numbers are all zero
 
@@ -466,10 +473,16 @@ released answer strings verbatim; the soft-IoU term then disables itself and
 training falls back to plain cross-entropy.
 
 **Box matching.** Section 3.2 calls a prediction a true positive if it overlaps
-*any* ground-truth box at IoU ≥ 0.3, and counts unmatched ground truth as false
-negatives. Those two statements are only consistent under one-to-one matching,
-so `eval.match` defaults to `greedy` (descending IoU). `--match any` gives the
-literal reading.
+*any* ground-truth box at IoU ≥ 0.3, the rest false positives, and *missed*
+ground-truth boxes false negatives. `eval.match` follows that as written and
+defaults to `any`: nothing is consumed by a match, so two predictions over one
+lesion are both true positives, and a ground-truth box is a false negative only
+when no prediction reaches it. TP and FN then count different things
+(predictions and ground-truth boxes) and no longer add up to the box total —
+the scorer counts both totals directly instead of deriving them. `--match
+greedy` is the stricter one-to-one variant, in which the second prediction over
+a lesion is demoted to a false positive; it is a *different protocol* from the
+published one, not a correction to it.
 
 **Table 4's Accuracy column.** The paper prints the same value for Accuracy and
 F1 in both rows (0.558 and 0.624). Those are not equal in general, and the
@@ -487,7 +500,8 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Covers box parsing and coordinate round-trips, IoU and greedy matching, the
+Covers box parsing and coordinate round-trips, IoU and both matching
+protocols, the
 split arithmetic, the config parser, the negation-aware answer parser, and the
 soft-box decoder (torch-dependent tests skip automatically when torch is
 absent).

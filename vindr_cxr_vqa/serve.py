@@ -43,7 +43,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .boxes import LOC_RE, Box, extract_locs, from_normalized, greedy_match, iou
+from .boxes import LOC_RE, Box, extract_locs, from_normalized, iou, match_any
 from .config import load_config
 from .constants import LOC_NORM_RANGE, PATHOLOGIES, QUESTION_TYPES
 from .evaluate import mentioned
@@ -323,10 +323,14 @@ def split_answer(text: str) -> tuple[str, str]:
 
 def describe_boxes(text: str, space: str, width: int, height: int,
                    gts_pixel: list[Box], iou_threshold: float) -> list[dict]:
-    """Every ``<loc_...>`` in the answer, in all three spaces, scored on IoU."""
+    """Every ``<loc_...>`` in the answer, in all three spaces, scored on IoU.
+
+    Matching is Section 3.2's, the same one ``evaluate.py`` scores with, so a
+    box the UI shows as matched is a box the tables count as a true positive.
+    """
     raws = extract_locs(text)
     pixels = [to_pixel(b, space, width, height) for b in raws]
-    matches, _, _ = greedy_match(pixels, gts_pixel, iou_threshold)
+    matches, _, _ = match_any(pixels, gts_pixel, iou_threshold)
     matched = {i: (j, v) for i, j, v in matches}
 
     out = []
