@@ -219,3 +219,64 @@ def test_an_archive_of_only_checkpoints_still_extracts_them(tmp_path):
 
     found = resolve_adapter(str(zip_path))
     assert found.endswith("checkpoint-300")
+
+
+# --------------------------------------------------------------------------
+# dtype selection (the CPU path's two silent failures)
+# --------------------------------------------------------------------------
+def test_an_explicit_dtype_is_never_second_guessed(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from vindr_cxr_vqa import modeling
+    assert modeling.resolve_dtype("float32") is torch.float32
+    assert modeling.resolve_dtype("bfloat16") is torch.bfloat16
+    assert modeling.resolve_dtype(torch.float16) is torch.float16
+
+
+def test_a_cpu_without_bf16_kernels_gets_fp32(monkeypatch):
+    """bf16 there is not slower, it is ~184x slower, and it reads as a hang."""
+    torch = pytest.importorskip("torch")
+    from vindr_cxr_vqa import modeling
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(modeling, "cpu_has_bf16_kernels", lambda: False)
+    assert modeling.resolve_dtype("auto") is torch.float32
+
+
+def test_a_cpu_with_bf16_kernels_keeps_bf16(monkeypatch):
+    """AVX512-BF16 or AMX: half the memory, and the kernels are real."""
+    torch = pytest.importorskip("torch")
+    from vindr_cxr_vqa import modeling
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(modeling, "cpu_has_bf16_kernels", lambda: True)
+    assert modeling.resolve_dtype("auto") is torch.bfloat16
+
+
+def test_fp16_is_never_chosen_off_a_gpu(monkeypatch):
+    """torch has almost no fp16 CPU kernels; it dies on the first matmul."""
+    torch = pytest.importorskip("torch")
+    from vindr_cxr_vqa import modeling
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    for has_bf16 in (True, False):
+        monkeypatch.setattr(modeling, "cpu_has_bf16_kernels", lambda: has_bf16)
+        assert modeling.resolve_dtype("auto") is not torch.float16
+
+
+def test_the_bf16_probe_falls_back_when_the_private_op_is_gone(monkeypatch):
+    """``torch.ops.mkldnn._is_mkldnn_bf16_supported`` is private and may not
+    exist; the capability string answers the same question more coarsely."""
+    torch = pytest.importorskip("torch")
+    from vindr_cxr_vqa import modeling
+
+    def gone():
+        raise RuntimeError("no such operator")
+
+    # torch.ops resolves attributes through __getattr__, so deleting the name
+    # would not hide it -- the probe has to be made to raise instead.
+    monkeypatch.setattr(torch.ops.mkldnn, "_is_mkldnn_bf16_supported", gone,
+                        raising=False)
+    monkeypatch.setattr(torch.backends.cpu, "get_cpu_capability",
+                        lambda: "AVX512")
+    assert modeling.cpu_has_bf16_kernels() is True
+
+    monkeypatch.setattr(torch.backends.cpu, "get_cpu_capability",
+                        lambda: "AVX2")
+    assert modeling.cpu_has_bf16_kernels() is False

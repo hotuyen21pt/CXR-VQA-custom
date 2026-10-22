@@ -65,11 +65,13 @@ services:
       # bitsandbytes needs CUDA. On CPU the 4-bit path cannot load at all, so
       # it is turned off here rather than failing inside from_pretrained.
       - --no-4bit
-      # torch ships almost no fp16 CPU kernels; bf16 has them and costs the
-      # same 8 GB. Without this the first matmul raises
-      # "addmm_impl_cpu_ not implemented for 'Half'".
-      - --dtype
-      - bfloat16
+      # No --dtype: "auto" inspects the CPU. fp16 has no CPU kernels at all,
+      # and bf16 has none either below AVX512-BF16 -- on an AVX2 machine it
+      # drops to a reference kernel measured 184x slower than fp32. So auto
+      # lands on fp32 here, which needs ~16 GB: raise Docker Desktop's memory
+      # limit to 20 GB or more (Settings -> Resources) or the container is
+      # OOM-killed mid-load.
+      #
       # Each token is a full forward pass on a CPU, so the reasoning tail is
       # most of the wait. 160 still leaves room for the answer, the <loc_...>
       # span and a sentence of reasoning.

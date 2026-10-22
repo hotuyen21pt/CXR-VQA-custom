@@ -33,25 +33,50 @@ def gpu_memory_gb() -> float:
     return torch.cuda.get_device_properties(0).total_memory / 2**30
 
 
+def cpu_has_bf16_kernels() -> bool:
+    """Whether oneDNN has real bf16 matmul kernels for this CPU.
+
+    AVX512-BF16 and AMX machines do. An AVX2 machine does not, and torch then
+    falls back to a reference implementation that converts element by element
+    and does not thread: measured on an i7-13700, a 1024^3 matmul runs at
+    2.4 GFLOP/s in bf16 against 443 GFLOP/s in fp32. A model loaded in bf16
+    there is not slightly slower, it is 184 times slower, and it looks like a
+    hang rather than a wrong dtype.
+    """
+    import torch
+    try:
+        return bool(torch.ops.mkldnn._is_mkldnn_bf16_supported())
+    except Exception:                                  # noqa: BLE001
+        # Private op, absent on some builds; the capability string is the
+        # coarser public answer to the same question.
+        try:
+            return torch.backends.cpu.get_cpu_capability() in ("AVX512", "AMX")
+        except Exception:                              # noqa: BLE001
+            return False
+
+
 def resolve_dtype(requested: Any) -> Any:
     """Turn ``model.torch_dtype`` into a real dtype.
 
-    ``auto`` means bf16 where the card supports it (Ampere and newer) and fp16
-    otherwise, which is what the paper used on its A6000.
+    On a GPU, ``auto`` means bf16 where the card supports it (Ampere and
+    newer) and fp16 otherwise, which is what the paper used on its A6000.
 
-    With no CUDA at all it means bf16 as well, for a different reason: torch's
-    CPU kernels are largely missing for fp16, so a model loaded that way dies
-    on the first matmul with "addmm_impl_cpu_ not implemented for 'Half'".
-    bf16 has the CPU kernels and the same 8 GB footprint, which is what makes
-    the container on a laptop run at all.
+    Off a GPU it is a choice between two bad options, and which one is bad
+    depends on the CPU. fp16 is out everywhere: torch ships almost no fp16 CPU
+    kernels, so the first matmul raises "addmm_impl_cpu_ not implemented for
+    'Half'". bf16 is out on a machine without bf16 kernels, for the speed
+    reason above. That leaves fp32, which works and threads properly but
+    doubles the memory -- about 16 GB for MedGemma-4B rather than 8 -- so the
+    choice is made explicitly here and printed, rather than discovered as an
+    OOM or an apparent hang.
     """
     import torch
     if isinstance(requested, torch.dtype):
         return requested
     if requested in ("auto", None, ""):
-        if not torch.cuda.is_available():
-            return torch.bfloat16
-        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        if torch.cuda.is_available():
+            return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        return torch.bfloat16 if cpu_has_bf16_kernels() else torch.float32
     return getattr(torch, str(requested))
 
 
@@ -171,6 +196,17 @@ def load_base_model(cfg, load_in_4bit: bool | None = None):
     print(f"[model] {cfg.model.name}")
     print(f"[model] dtype={dtype}, 4-bit={used_4bit}, "
           f"vram={gpu_memory_gb():.0f} GB")
+    if not torch.cuda.is_available():
+        # The two ways a CPU run goes wrong are silent, so say which one the
+        # dtype just avoided -- or walked into, if it was forced.
+        caps = torch.backends.cpu.get_cpu_capability()
+        if dtype is torch.bfloat16 and not cpu_has_bf16_kernels():
+            print(f"[model] WARNING: bf16 on a {caps} CPU has no oneDNN "
+                  "kernels; expect roughly 100x slower generation. Pass "
+                  "--dtype float32 (needs ~16 GB) instead.")
+        elif dtype is torch.float32:
+            print(f"[model] fp32 on a {caps} CPU: ~16 GB resident, but the "
+                  "matmuls are vectorised and threaded.")
     return model, used_4bit
 
 
