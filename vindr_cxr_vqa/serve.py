@@ -36,6 +36,7 @@ import os
 import posixpath
 import random
 import re
+import shutil
 import threading
 import time
 import traceback
@@ -68,6 +69,19 @@ def newest_checkpoint(path: str) -> str | None:
              if (m := re.fullmatch(r"checkpoint-(\d+)", name))
              and is_adapter(os.path.join(path, name))]
     return max(found)[1] if found else None
+
+
+def stale(dest: str, src: str) -> bool:
+    """Whether ``dest`` was extracted from an older version of ``src``.
+
+    Compared against the extracted config rather than the directory itself,
+    because a directory's mtime moves when anything inside it is touched.
+    """
+    try:
+        return (os.path.getmtime(src)
+                > os.path.getmtime(os.path.join(dest, "adapter_config.json")))
+    except OSError:
+        return False
 
 
 def unzip_adapter(src: str, dest: str) -> None:
@@ -109,6 +123,13 @@ def resolve_adapter(path: str | None) -> str | None:
             raise SystemExit(f"--adapter: no such file: {path}")
         dest = os.path.join(os.path.dirname(path),
                             os.path.basename(path)[:-4] + "-unzipped")
+        if is_adapter(dest) and stale(dest, path):
+            # A finished run is usually dropped in under the name the last one
+            # had. Reusing the old extraction then serves the previous
+            # adapter against the new archive, silently, and the only symptom
+            # is that a model which should have improved did not.
+            print(f"[serve] {path} is newer than {dest}; re-extracting")
+            shutil.rmtree(dest)
         if not is_adapter(dest):
             unzip_adapter(path, dest)
             print(f"[serve] unzipped {path} -> {dest}")

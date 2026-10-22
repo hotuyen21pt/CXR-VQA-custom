@@ -316,3 +316,46 @@ def test_a_directory_with_no_weights_gets_no_rename_hint(tmp_path):
 def test_a_correctly_named_checkpoint_needs_no_hint(tmp_path):
     d = make_adapter(tmp_path / "ok")
     assert resolve_adapter(d) == os.path.abspath(d)
+
+
+# --------------------------------------------------------------------------
+# a new run dropped in under the old name
+# --------------------------------------------------------------------------
+def _zip_adapter(src_dir, zip_path, payload):
+    with zipfile.ZipFile(zip_path, "w") as z:
+        z.writestr("adapter_config.json", json.dumps({"r": 16}))
+        z.writestr("adapter_model.safetensors", payload)
+    return str(zip_path)
+
+
+def test_a_newer_archive_is_re_extracted(tmp_path):
+    """A finished run arrives under the name the last one had. Reusing the
+    old extraction serves the previous adapter, and the only symptom is a
+    model that should have improved and did not."""
+    zip_path = tmp_path / "medgemma-lora.zip"
+    _zip_adapter(tmp_path, zip_path, b"OLD RUN")
+    first = resolve_adapter(str(zip_path))
+    weights = os.path.join(first, "adapter_model.safetensors")
+    assert open(weights, "rb").read() == b"OLD RUN"
+
+    # Replace the archive and make it unambiguously newer.
+    _zip_adapter(tmp_path, zip_path, b"NEW RUN")
+    later = os.path.getmtime(weights) + 10
+    os.utime(zip_path, (later, later))
+
+    second = resolve_adapter(str(zip_path))
+    assert second == first, "it should reuse the same directory"
+    assert open(os.path.join(second, "adapter_model.safetensors"),
+                "rb").read() == b"NEW RUN", "the stale extraction was served"
+
+
+def test_an_unchanged_archive_is_not_re_extracted(tmp_path):
+    """Re-extracting 114 MB on every start would be waste, not safety."""
+    zip_path = tmp_path / "medgemma-lora.zip"
+    _zip_adapter(tmp_path, zip_path, b"SAME")
+    first = resolve_adapter(str(zip_path))
+    marker = os.path.join(first, "extra-file-we-left")
+    open(marker, "w").close()
+
+    assert resolve_adapter(str(zip_path)) == first
+    assert os.path.exists(marker), "the directory was thrown away needlessly"
