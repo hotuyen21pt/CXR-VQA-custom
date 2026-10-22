@@ -21,7 +21,13 @@ DEFAULT_REPO = "google/medgemma-4b-it"
 
 #: Weights plus the tokenizer/processor files `from_pretrained` needs.
 #: Excludes the duplicate .bin/.gguf/.pth copies, which would double the size.
-ALLOW = ["*.safetensors", "*.json", "*.model", "*.txt"]
+#:
+#: ``*.jinja`` is not decoration. transformers moved chat templates out of
+#: tokenizer_config.json into a ``chat_template.jinja`` beside it, and a
+#: snapshot without that file loads a processor whose apply_chat_template
+#: raises "this processor does not have a chat template" -- after the eight
+#: gigabytes have already been fetched.
+ALLOW = ["*.safetensors", "*.json", "*.model", "*.txt", "*.jinja"]
 IGNORE = ["*.bin", "*.pth", "*.gguf", "*.h5", "*.msgpack", "original/*"]
 
 
@@ -31,6 +37,33 @@ def human(n: float) -> str:
             return f"{n:.1f} {unit}"
         n /= 1024.0
     return f"{n:.1f} GB"
+
+
+def has_chat_template(path: str) -> bool:
+    """Whether the snapshot can turn messages into a prompt.
+
+    Checking for ``chat_template.jinja`` alone would cry wolf on the models
+    that still keep the template inside ``tokenizer_config.json``; checking
+    only the latter misses every model since transformers split it out. A
+    snapshot with neither loads fine and then raises "this processor does not
+    have a chat template" on the first question, which is a long way to come
+    to find out.
+    """
+    import json
+    if os.path.exists(os.path.join(path, "chat_template.jinja")):
+        return True
+    for name in ("tokenizer_config.json", "processor_config.json",
+                 "chat_template.json"):
+        full = os.path.join(path, name)
+        if not os.path.exists(full):
+            continue
+        try:
+            with open(full, encoding="utf-8") as fh:
+                if json.load(fh).get("chat_template"):
+                    return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def dir_size(path: str) -> int:
@@ -95,6 +128,8 @@ def main() -> None:
     missing = [n for n in ("config.json", "preprocessor_config.json",
                            "tokenizer.json")
                if not os.path.exists(os.path.join(out, n))]
+    if not has_chat_template(out):
+        missing.append("a chat template")
     if missing:
         print(f"\n[model] WARNING: missing {missing} — "
               "re-run with --all-files")
