@@ -182,10 +182,32 @@ bundle thì mở thẳng URL đó cũng được.
 
 ## Màn hình có gì
 
-**Cột trái — chọn ảnh.** Ba tab `val` / `test` / `train` theo đúng split đã
-build. Ô tìm kiếm lọc theo câu hỏi, `image_id` hay tên bệnh lý; dropdown lọc
-theo 6 loại câu hỏi. Chip **"box vá"** nghĩa là mẫu đó nằm trong 60% mà box
-công bố thuộc bệnh lý khác với nhãn — xem `docs/DATA_NOTES.md`.
+**Cột trái — chọn ảnh.** Ô tìm kiếm lọc theo câu hỏi, `image_id` hay tên bệnh
+lý; dropdown lọc theo 6 loại câu hỏi. Chip **"box vá"** nghĩa là mẫu đó nằm
+trong 60% mà box công bố thuộc bệnh lý khác với nhãn — xem
+`docs/DATA_NOTES.md`.
+
+Ba tab là ba split đã build, và khác nhau ở đúng một điểm: **model đã nhìn thấy
+`train` lúc huấn luyện, chưa từng thấy `val` và `test`.**
+
+| Tab | QA pairs | Ảnh | Model đã thấy? | Dùng để |
+| --- | --- | --- | --- | --- |
+| `val` | 2 637 | 659 | không | ngồi thử ở đây; Bảng 4–6 tính trên tập này |
+| `test` | 1 207 | 300 | không | con số held-out để báo cáo |
+| `train` | 14 960 | 3 735 | **có** | chỉ để xem hệ thống còn sống |
+
+Trả lời đúng trên `train` không chứng minh gì cả — model đã học thuộc chúng.
+Nhưng trả lời *sai* trên `train` thì chắc chắn hỏng ở đâu đó: sai base model,
+adapter không gắn được, hoặc `loc_format` lệch so với lúc train.
+
+**`test` là tập con của `val`, không phải phần thứ ba.** Đo trên dữ liệu đã
+build: cả 1 207 `sample_id` và cả 300 `image_id` của `test` đều nằm trong
+`val`; `train` không giao với cả hai (0 ảnh chung). Lý do ở chính paper — Bảng
+3 ghi 3 735 + 659 = 4 394 ảnh, tức toàn bộ dữ liệu phát hành, rồi lại ghi thêm
+test 300 ảnh, nên không còn ảnh nào dư để làm phần thứ ba. Vì vậy một lần chạy
+inference trên `val` chấm được cả hai bảng. Chọn một mẫu ở tab `test` rồi thấy
+nó cũng có trong tab `val` là đúng, không phải lỗi hiển thị. Muốn tách hẳn thì
+build lại với `--disjoint-test`, nhưng khi đó số không còn so được với paper.
 
 Hoặc kéo-thả ảnh X-quang của anh vào ô dưới. Ảnh ngoài dataset thì không có
 ground truth, nên UI nói thẳng là không chấm IoU được, thay vì hiện một con số

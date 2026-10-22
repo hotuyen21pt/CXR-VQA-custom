@@ -7,7 +7,15 @@
 
 import { useRef } from 'react'
 
-const SPLITS = ['val', 'test', 'train']
+// What each split means for someone reading an answer. The difference that
+// matters is whether the model was trained on it: a good answer on `train`
+// proves nothing, because it memorised that image.
+const SPLITS = [
+  ['val', 'Model chưa từng thấy. Bảng 4-6 của paper tính trên tập này — thử ở đây.'],
+  ['test', '300 ảnh held-out. Là TẬP CON của val, không phải split thứ ba.'],
+  ['train', 'Model ĐÃ thấy lúc train. Trả lời đúng ở đây không chứng minh gì; '
+    + 'trả lời sai thì chắc chắn có gì đó hỏng.'],
+]
 
 export default function SamplePicker({
   split, onSplit, counts,
@@ -29,18 +37,26 @@ export default function SamplePicker({
   return (
     <aside className="picker">
       <div className="tabs">
-        {SPLITS.map((s) => (
+        {SPLITS.map(([s, hint]) => (
           <button
             key={s}
             className={s === split ? 'tab on' : 'tab'}
             onClick={() => onSplit(s)}
             disabled={!counts?.[s]}
+            title={hint}
           >
             {s}
             {counts?.[s] ? <em>{counts[s].toLocaleString()}</em> : null}
           </button>
         ))}
       </div>
+
+      {split === 'train' && (
+        <p className="notice">
+          Model đã được huấn luyện trên split này — câu trả lời đúng ở đây
+          không nói lên chất lượng. Dùng <strong>val</strong> để đánh giá.
+        </p>
+      )}
 
       <div className="filters">
         <input
