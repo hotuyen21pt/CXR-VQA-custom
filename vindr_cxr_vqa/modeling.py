@@ -38,14 +38,20 @@ def resolve_dtype(requested: Any) -> Any:
 
     ``auto`` means bf16 where the card supports it (Ampere and newer) and fp16
     otherwise, which is what the paper used on its A6000.
+
+    With no CUDA at all it means bf16 as well, for a different reason: torch's
+    CPU kernels are largely missing for fp16, so a model loaded that way dies
+    on the first matmul with "addmm_impl_cpu_ not implemented for 'Half'".
+    bf16 has the CPU kernels and the same 8 GB footprint, which is what makes
+    the container on a laptop run at all.
     """
     import torch
     if isinstance(requested, torch.dtype):
         return requested
     if requested in ("auto", None, ""):
-        if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+        if not torch.cuda.is_available():
             return torch.bfloat16
-        return torch.float16
+        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     return getattr(torch, str(requested))
 
 

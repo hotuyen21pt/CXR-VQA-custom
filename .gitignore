@@ -19,3 +19,6 @@ __pycache__/
 # except the one this repo generates: regenerating it needs the images and the
 # built dataset, which a fresh clone does not have.
 !docs/PIPELINE_VISUAL.pdf
+
+# Holds an HF token.
+docker/.env

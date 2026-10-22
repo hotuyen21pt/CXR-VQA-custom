@@ -184,3 +184,38 @@ def test_mock_from_a_record_lands_near_its_ground_truth():
                            LOC_NORM_RANGE - 1, gt, 0.3)
     assert boxes[0]["best_iou"] > 0.4
     assert "Reasoning:" in text
+
+
+def test_a_kaggle_archive_leaves_its_checkpoints_in_the_zip(tmp_path):
+    """1.1 GB of optimizer state is not something inference needs on disk."""
+    run = make_adapter(tmp_path / "run")
+    make_adapter(tmp_path / "run" / "checkpoint-600")
+    with open(tmp_path / "run" / "checkpoint-600" / "optimizer.pt", "wb") as fh:
+        fh.write(b"\0" * 4096)
+
+    zip_path = tmp_path / "medgemma-lora.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        for root, _, files in os.walk(tmp_path / "run"):
+            for name in files:
+                full = os.path.join(root, name)
+                z.write(full, os.path.relpath(full, tmp_path / "run"))
+
+    found = resolve_adapter(str(zip_path))
+    assert os.path.isfile(os.path.join(found, "adapter_config.json"))
+    assert not os.path.exists(os.path.join(found, "checkpoint-600")), (
+        "the checkpoints were extracted anyway")
+
+
+def test_an_archive_of_only_checkpoints_still_extracts_them(tmp_path):
+    """Without a final adapter the checkpoints are all there is to load."""
+    src = tmp_path / "run"
+    make_adapter(src / "checkpoint-300")
+    zip_path = tmp_path / "lora.zip"
+    with zipfile.ZipFile(zip_path, "w") as z:
+        for root, _, files in os.walk(src):
+            for name in files:
+                full = os.path.join(root, name)
+                z.write(full, os.path.relpath(full, src))
+
+    found = resolve_adapter(str(zip_path))
+    assert found.endswith("checkpoint-300")

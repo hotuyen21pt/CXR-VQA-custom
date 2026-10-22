@@ -70,6 +70,27 @@ def newest_checkpoint(path: str) -> str | None:
     return max(found)[1] if found else None
 
 
+def unzip_adapter(src: str, dest: str) -> None:
+    """Extract the adapter from ``src``, leaving the training debris behind.
+
+    A Kaggle archive carries the final adapter next to every checkpoint it
+    kept, and each of those drags an optimizer state twice the size of the
+    weights -- 1.1 GB of zip for 114 MB that inference needs. When the final
+    adapter is there, only the files beside it are extracted.
+
+    Resuming training still wants the checkpoints, but that is train.py's job
+    and it reads the archive itself.
+    """
+    import zipfile
+    with zipfile.ZipFile(src) as z:
+        names = z.namelist()
+        root_adapter = "adapter_config.json" in names
+        wanted = [n for n in names
+                  if not n.endswith("/")
+                  and (not root_adapter or "/" not in n)]
+        z.extractall(dest, members=wanted)
+
+
 def resolve_adapter(path: str | None) -> str | None:
     """Turn whatever the user pasted into a directory peft can load.
 
@@ -89,9 +110,7 @@ def resolve_adapter(path: str | None) -> str | None:
         dest = os.path.join(os.path.dirname(path),
                             os.path.basename(path)[:-4] + "-unzipped")
         if not is_adapter(dest):
-            import zipfile
-            with zipfile.ZipFile(path) as z:
-                z.extractall(dest)
+            unzip_adapter(path, dest)
             print(f"[serve] unzipped {path} -> {dest}")
         # make_archive zips the contents, so the files may sit at the root or
         # one directory down, depending on how the zip was made.
@@ -587,11 +606,17 @@ def main() -> None:
                          "question")
     ap.add_argument("--max-new-tokens", type=int, default=None)
     ap.add_argument("--no-4bit", action="store_true")
+    ap.add_argument("--dtype", default=os.environ.get("VINDR_DTYPE"),
+                    help="override model.torch_dtype (bfloat16, float16, "
+                         "float32). Default 'auto' picks bf16 off-GPU, where "
+                         "torch has no fp16 CPU kernels. Env: VINDR_DTYPE")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     if args.model:
         cfg.model.name = args.model
+    if args.dtype:
+        cfg.model.torch_dtype = args.dtype
     if args.dataset_dir:
         cfg.paths.dataset_dir = os.path.abspath(args.dataset_dir)
     if args.processed_dir:

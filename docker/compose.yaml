@@ -1,0 +1,121 @@
+# Four services over one image. Paths are bind mounts, so the 8 GB of weights
+# is downloaded once onto the host and every service sees the same copy.
+#
+#   fetch-model   one-shot: download MedGemma into ./outputs/models   (needs HF_TOKEN)
+#   serve         the UI + backend on CPU                             (slow, but runs anywhere)
+#   serve-gpu     the same thing with --gpus all and 4-bit weights
+#   mock          the UI with canned answers; no weights, no torch call at all
+#
+# Copy docker/.env.example to docker/.env and fill in HF_TOKEN before the
+# first fetch. Everything after that works with the network off.
+
+name: vindr-cxr-vqa
+
+x-common: &common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile
+  image: vindr-cxr-vqa:latest
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    # The model cache and the downloaded snapshot.
+    - ../outputs:/app/outputs
+    # The X-rays and the annotation CSVs.
+    - ../dataset:/app/dataset:ro
+    # The built JSONL: the sample list and the ground-truth boxes.
+    - ../data/processed:/app/data/processed:ro
+
+services:
+  # -- one-shot: pull the weights -----------------------------------------
+  fetch-model:
+    <<: *common
+    environment:
+      # Only this service talks to the hub; the others run with it off.
+      HF_HUB_OFFLINE: "0"
+    command:
+      - python
+      - scripts/fetch_model.py
+      - --repo
+      - ${MEDGEMMA_REPO:-google/medgemma-1.5-4b-it}
+      - --out
+      - /app/outputs/models/${MODEL_DIR:-medgemma-1.5-4b-it}
+
+  # -- the real thing, on CPU ---------------------------------------------
+  serve:
+    <<: *common
+    environment:
+      # Nothing may be fetched: the weights are the mounted snapshot, and a
+      # hub lookup with no network just stalls the first request for minutes.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    ports:
+      - "${PORT:-8000}:8000"
+    command:
+      - python
+      - -m
+      - vindr_cxr_vqa.serve
+      - --host
+      - 0.0.0.0
+      - --model
+      - /app/outputs/models/${MODEL_DIR:-medgemma-1.5-4b-it}
+      - --adapter
+      - ${ADAPTER:-/app/outputs/medgemma-lora}
+      # bitsandbytes needs CUDA. On CPU the 4-bit path cannot load at all, so
+      # it is turned off here rather than failing inside from_pretrained.
+      - --no-4bit
+      # torch ships almost no fp16 CPU kernels; bf16 has them and costs the
+      # same 8 GB. Without this the first matmul raises
+      # "addmm_impl_cpu_ not implemented for 'Half'".
+      - --dtype
+      - bfloat16
+      # Each token is a full forward pass on a CPU, so the reasoning tail is
+      # most of the wait. 160 still leaves room for the answer, the <loc_...>
+      # span and a sentence of reasoning.
+      - --max-new-tokens
+      - "${MAX_NEW_TOKENS:-160}"
+      # Eight gigabytes of weights take minutes to load. Doing it at startup
+      # puts the wait in `compose up`, where there are logs, instead of
+      # inside the first question, where there is a spinner.
+      - --preload
+
+  # -- the real thing, on a GPU -------------------------------------------
+  serve-gpu:
+    <<: *common
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    ports:
+      - "${PORT:-8000}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command:
+      - python
+      - -m
+      - vindr_cxr_vqa.serve
+      - --host
+      - 0.0.0.0
+      - --model
+      - /app/outputs/models/${MODEL_DIR:-medgemma-1.5-4b-it}
+      - --adapter
+      - ${ADAPTER:-/app/outputs/medgemma-lora}
+      - --preload
+
+  # -- the interface alone, with canned answers ---------------------------
+  mock:
+    <<: *common
+    ports:
+      - "${PORT:-8000}:8000"
+    command:
+      - python
+      - -m
+      - vindr_cxr_vqa.serve
+      - --host
+      - 0.0.0.0
+      - --mock

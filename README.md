@@ -38,6 +38,7 @@ vindr_cxr_vqa/
   preflight.py              check packages, GPU, weights and data before training
   serve.py                  HTTP backend for the inference UI
 ui/                         React playground: ask one image at a time
+docker/                     Dockerfile + compose: fetch weights, serve, mock
 scripts/
   reproduce.py              run every result the paper reports, end to end
   make_kaggle_bundle.py     package repo + data + images into one zip
@@ -340,6 +341,22 @@ zero-shot baseline, so the two rows of Tables 4-6 can be compared by eye.
 Build the page once (`cd ui && npm install && npm run build`) and `serve.py`
 hosts it itself at `http://127.0.0.1:8000`; or run `npm run dev` on a laptop
 and point the **Backend** field at a GPU box elsewhere.
+
+Where installing torch locally is not worth the fight, the whole thing is a
+compose file -- node builds the bundle, python 3.11 serves it, and the weights,
+X-rays and adapter are bind-mounted rather than baked in:
+
+```bash
+cp docker/.env.example docker/.env            # then fill in HF_TOKEN
+docker compose -f docker/compose.yaml build
+docker compose -f docker/compose.yaml run --rm fetch-model   # ~8 GB, once
+docker compose -f docker/compose.yaml up serve               # or serve-gpu, or mock
+```
+
+The adapter records which base model it was trained against, in
+`adapter_config.json -> base_model_name_or_path`. LoRA loads onto a different
+base without complaint and then answers nonsense, so check it before setting
+`MEDGEMMA_REPO`.
 
 **[docs/UI.md](docs/UI.md)** has the full wiring: which training output goes
 into which flag, how to reach a Kaggle session, and what each panel shows.

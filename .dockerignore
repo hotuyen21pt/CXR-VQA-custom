@@ -1,0 +1,24 @@
+# The build context is the repo root, which holds several gigabytes of things
+# the image must not carry: they are bind-mounted at run time instead.
+
+dataset/
+data/
+outputs/
+.venv/
+.git/
+notebooks/
+docs/
+*.pdf
+
+# Rebuilt inside the image by the ui-build stage.
+ui/node_modules/
+ui/dist/
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+*.egg-info/
+
+# Never ship a token into an image layer.
+docker/.env

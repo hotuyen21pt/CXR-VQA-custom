@@ -108,6 +108,59 @@ Trả lời dựng sẵn, không nạp model, không cần torch. Mỗi câu tr�
 dấu `MOCK` trên màn hình. Dùng để kiểm tra giao diện và luồng dữ liệu —
 **không phản ánh model nói gì**.
 
+### Cách 4 — Docker (không phải lo python trên máy)
+
+Đây là cách gọn nhất khi python trên máy không cài được torch. Image tự build
+React bằng node rồi chạy backend bằng python 3.11 Linux; model, ảnh và adapter
+đều mount vào, không nướng vào image.
+
+```bash
+cp docker/.env.example docker/.env     # rồi điền HF_TOKEN
+docker compose -f docker/compose.yaml build
+
+# tải trọng số một lần (~8 GB) về ./outputs/models/
+docker compose -f docker/compose.yaml run --rm fetch-model
+
+# chạy
+docker compose -f docker/compose.yaml up serve        # CPU
+docker compose -f docker/compose.yaml up serve-gpu    # máy có GPU
+docker compose -f docker/compose.yaml up mock         # chỉ giao diện
+```
+
+Mở `http://localhost:8000`.
+
+Bốn thứ cần gắn, giờ nằm trong `docker/.env`:
+
+| Biến | Là gì |
+| --- | --- |
+| `HF_TOKEN` | chỉ `fetch-model` đọc; các service khác chạy với `HF_HUB_OFFLINE=1` |
+| `MEDGEMMA_REPO` | repo trên HuggingFace, mặc định `google/medgemma-1.5-4b-it` |
+| `MODEL_DIR` | thư mục dưới `outputs/models/` mà trọng số nằm vào |
+| `ADAPTER` | **đường dẫn trong container**. `outputs/` mount ở `/app/outputs`, nên `./outputs/medgemma-lora.zip` ở host là `/app/outputs/medgemma-lora.zip` |
+
+**Chọn base model cho đúng.** Adapter ghi lại nó được train trên model nào,
+trong `adapter_config.json` → `base_model_name_or_path`. Nạp LoRA lên một base
+khác thì nó vẫn load được nhưng trả lời rác. Đọc ra bằng:
+
+```bash
+python - <<'EOF'
+import json, zipfile
+print(json.loads(zipfile.ZipFile('outputs/medgemma-lora.zip')
+      .read('adapter_config.json'))['base_model_name_or_path'])
+EOF
+```
+
+**Chạy CPU thì chậm.** Một câu trả lời mất khoảng 2–5 phút, vì mỗi token là
+một lượt forward qua 4 tỉ tham số. Đủ để xem hệ thống chạy đúng, không đủ để
+chấm cả split — cái đó vẫn nên đẩy lên Kaggle. Service `serve` đã đặt sẵn
+`--dtype bfloat16` (torch gần như không có kernel fp16 cho CPU),
+`--max-new-tokens 160` để cắt bớt phần lý giải, và `--preload` để thời gian
+nạp 8 GB nằm trong log `compose up` chứ không nằm trong câu hỏi đầu tiên.
+
+Docker Desktop cấp bao nhiêu RAM cho container là giới hạn thật:
+`docker info --format '{{.MemTotal}}'`. Model bf16 cần ~9 GB nên dưới 12 GB sẽ
+bị OOM-kill — chỉnh trong Settings → Resources.
+
 ### Trên Kaggle
 
 Kaggle không mở cổng ra ngoài, nên cần một đường hầm. Trong một cell:
