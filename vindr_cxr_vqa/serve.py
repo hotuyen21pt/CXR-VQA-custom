@@ -133,7 +133,46 @@ def resolve_adapter(path: str | None) -> str | None:
     raise SystemExit(
         f"--adapter: {path} has no adapter_config.json and no checkpoint-N "
         "inside it. Point it at the directory train.py wrote "
-        "(outputs/medgemma-lora), or at the .zip the Kaggle notebook saved.")
+        "(outputs/medgemma-lora), or at the .zip the Kaggle notebook saved."
+        + renamed_hint(path))
+
+
+#: Downloading a checkpoint file by file through a browser often rewrites the
+#: extension -- adapter_config.json arrives as adapter_config.txt. The weights
+#: keep their name, so the directory looks almost right and the error does not
+#: mention the files that are sitting there.
+EXPECTED_NAMES = {
+    "adapter_config": "adapter_config.json",
+    "tokenizer": "tokenizer.json",
+    "tokenizer_config": "tokenizer_config.json",
+    "chat_template": "chat_template.jinja",
+    "preprocessor_config": "preprocessor_config.json",
+}
+
+
+def renamed_hint(path: str) -> str:
+    """A rename suggestion when the directory holds the right files, renamed."""
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return ""
+    if not any(n.startswith("adapter_model.") for n in names):
+        return ""
+
+    renames = []
+    for name in sorted(names):
+        stem, ext = os.path.splitext(name)
+        want = EXPECTED_NAMES.get(stem)
+        if want and name != want:
+            renames.append((name, want))
+    if not renames:
+        return ""
+
+    lines = "\n".join(f"  mv {os.path.join(path, a)} {os.path.join(path, b)}"
+                      for a, b in renames)
+    return ("\n\nThe weights are there, so this looks like a checkpoint whose "
+            "files were renamed on the way down (a browser saving .json as "
+            ".txt does this):\n" + lines)
 
 
 # --------------------------------------------------------------------------

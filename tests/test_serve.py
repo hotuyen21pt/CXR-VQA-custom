@@ -280,3 +280,39 @@ def test_the_bf16_probe_falls_back_when_the_private_op_is_gone(monkeypatch):
     monkeypatch.setattr(torch.backends.cpu, "get_cpu_capability",
                         lambda: "AVX2")
     assert modeling.cpu_has_bf16_kernels() is False
+
+
+# --------------------------------------------------------------------------
+# a checkpoint whose files were renamed on the way down
+# --------------------------------------------------------------------------
+def test_renamed_json_files_are_named_in_the_error(tmp_path):
+    """Browsers save .json as .txt. The weights keep their name, so the
+    directory looks almost right and the plain error points nowhere."""
+    d = tmp_path / "checkpoints"
+    d.mkdir()
+    (d / "adapter_model.safetensors").write_bytes(b"\0" * 16)
+    for name in ("adapter_config.txt", "tokenizer.txt",
+                 "tokenizer_config.txt", "chat_template.txt"):
+        (d / name).write_text("{}")
+
+    with pytest.raises(SystemExit) as exc:
+        resolve_adapter(str(d))
+    message = str(exc.value)
+    assert "renamed" in message
+    assert "adapter_config.txt" in message and "adapter_config.json" in message
+    assert "chat_template.jinja" in message
+
+
+def test_a_directory_with_no_weights_gets_no_rename_hint(tmp_path):
+    """Random .txt files next to nothing are not a mangled checkpoint."""
+    d = tmp_path / "notes"
+    d.mkdir()
+    (d / "adapter_config.txt").write_text("{}")
+    with pytest.raises(SystemExit) as exc:
+        resolve_adapter(str(d))
+    assert "renamed" not in str(exc.value)
+
+
+def test_a_correctly_named_checkpoint_needs_no_hint(tmp_path):
+    d = make_adapter(tmp_path / "ok")
+    assert resolve_adapter(d) == os.path.abspath(d)

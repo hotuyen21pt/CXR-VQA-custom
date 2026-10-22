@@ -22,3 +22,6 @@ __pycache__/
 
 # Holds an HF token.
 docker/.env
+
+# A checkpoint dropped in by hand; adapters live in outputs/.
+checkpoints/
