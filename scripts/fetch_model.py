@@ -58,10 +58,18 @@ def main() -> None:
                                    args.repo.split("/")[-1])
     os.makedirs(out, exist_ok=True)
 
-    token = args.token or os.environ.get("HF_TOKEN")
+    # `or None` matters: an exported-but-empty HF_TOKEN -- which is what a
+    # .env file with `HF_TOKEN=` produces -- is an empty string, not absent.
+    # Passed through, it becomes the header `Bearer ` and the hub fails with
+    # "Illegal header value", which reads like a bug in the client rather
+    # than a missing token.
+    token = args.token or os.environ.get("HF_TOKEN") or None
     print(f"[model] downloading {args.repo}\n[model]   -> {out}")
     print("[model] this is ~8 GB and gated; accept the licence at "
           f"https://huggingface.co/{args.repo} first")
+    if token is None:
+        print("[model] no token: --token, HF_TOKEN or a cached "
+              "`hf auth login` are all unset. A gated repo will 401.")
 
     try:
         snapshot_download(
