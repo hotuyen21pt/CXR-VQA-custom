@@ -65,11 +65,18 @@ the validation split (what the paper reports) and the held-out test split, and
 Figure 2.
 
 **On run time.** The paper trains 3 epochs over ~21k samples in ~36 h on an
-A6000 (48 GB); the released data gives 14,960 training pairs, so 3 epochs is
-2,805 optimizer steps here. A Kaggle session is capped at 12 h, so `MAX_STEPS`
-defaults to a capped pass. Checkpoints are written every 100 steps, so raising
-it (or setting `-1` for the full 3 epochs) and resuming across sessions works —
-see the fine-tuning section for how to carry checkpoints over."""
+A6000 (48 GB). The released data gives 14,960 training pairs, so at effective
+batch 16 one epoch is 935 optimizer steps and the paper's 3 epochs are **2,805
+steps**. A Kaggle session caps at 12 h and a T4 fits roughly 600 of those
+steps, so the full run is about **five sessions**, carried across by
+checkpoints — the fine-tuning section says how.
+
+`MAX_STEPS = -1` (the default) means those 3 epochs. Setting a number stops
+early instead, which is what a smoke test wants and what a single session can
+finish; 600 steps is about two thirds of one epoch. That matters more than it
+sounds: localisation is the part that needs the epochs. A 600-step adapter
+answers the text question correctly and then emits a corner box — it has
+learned the `<loc_...>` syntax but not where to put it."""
 
 SETUP = '''\
 import os, sys, glob, json, shutil, subprocess
@@ -536,21 +543,53 @@ the output**: `/kaggle/working` is wiped when a session ends. Use *Save Version
 → Save & Run All*, or download `medgemma-lora.zip` from the last cell and
 re-attach it as a Dataset.
 
-`MAX_STEPS = -1` runs the paper's full 3 epochs (~2,805 steps), which is well
-beyond a single 12 h session."""
+**Spreading 2,805 steps over several sessions.** Each session: *Save Version →
+Save & Run All*, then in the next session *Add Input* → this notebook's own
+previous output. The cell below copies any `medgemma-lora` it finds under
+`/kaggle/input` into place, and `--resume auto` continues from the newest
+checkpoint. The cosine schedule is rebuilt for the full 2,805-step horizon and
+fast-forwarded, so a run that previously decayed to ~0 at its own cap picks the
+learning rate back up instead of continuing at zero.
+
+Set `RESUME = False` to start over — worth it only when a change makes the
+saved optimizer state wrong, such as a different learning rate or a different
+set of LoRA targets."""
 
 TRAIN = '''\
-MAX_STEPS = 600          # -1 for the paper's full 3 epochs (~2,805 steps)
+# -1 runs the paper's 3 epochs: 14,960 samples at effective batch 16 is 935
+# steps an epoch, so 2,805 in total. That is several sessions' worth -- see
+# the note above -- and the point of resuming is to spread it across them.
+# Set a number instead to stop early (600 is roughly two thirds of an epoch).
+MAX_STEPS = -1
+
+# False starts training from scratch even when a previous run is attached.
+# Worth it only if you changed something a resumed optimizer state would
+# contradict, such as the learning rate or which modules LoRA wraps.
+RESUME = True
+
 ADAPTER = f"{OUT}/medgemma-lora"
 
-# If a previous session left checkpoints in /kaggle/input, copy them in first
-# so --resume auto can find them.
-for src in glob.glob("/kaggle/input/*/medgemma-lora"):
-    print("found previous checkpoints:", src)
-    shutil.copytree(src, ADAPTER, dirs_exist_ok=True)
+if RESUME:
+    # /kaggle/working is wiped between sessions, so a previous run comes back
+    # as an attached input and has to be copied into place before
+    # --resume auto can see it.
+    for src in glob.glob("/kaggle/input/*/medgemma-lora"):
+        print("found previous checkpoints:", src)
+        shutil.copytree(src, ADAPTER, dirs_exist_ok=True)
+
+done = sorted(glob.glob(f"{ADAPTER}/checkpoint-*"),
+              key=lambda s: int(s.rsplit("-", 1)[1]))
+if done:
+    at = int(done[-1].rsplit("-", 1)[1])
+    print(f"resuming at step {at}" + (f" of {MAX_STEPS}" if MAX_STEPS > 0
+                                      else " of 2,805 (3 epochs)"))
+    # The cosine schedule is rebuilt for the new horizon and fast-forwarded,
+    # so a run that previously decayed to ~0 at its own cap picks the
+    # learning rate back up rather than continuing at zero.
 
 !{sys.executable} -m vindr_cxr_vqa.train --config {CFG_PATH} \\
-    --output-dir {ADAPTER} --max-steps {MAX_STEPS} --resume auto'''
+    --output-dir {ADAPTER} --max-steps {MAX_STEPS} \\
+    --resume {"auto" if RESUME else "none"}'''
 
 CHECKPOINTS = '''\
 # What actually got saved.

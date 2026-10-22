@@ -333,16 +333,16 @@ def main() -> None:
               "vqa": vqa, "detection": det, "localization": loc}
 
     print(f"\n=== {tag}  (split={args.split}, space={space}, match={match}) ===")
-    print(f"\nTable 4 — VQA (text-based lesion classification)")
+    print("\nTable 4 -- VQA (text-based lesion classification)")
     print(f"  Accuracy {vqa['accuracy']:.3f}   Precision {vqa['precision']:.3f}"
           f"   Recall {vqa['recall']:.3f}   F1 {vqa['f1']:.3f}")
-    print(f"\nTable 5 — Bounding-box detection (IoU>={det['iou_threshold']}, "
+    print(f"\nTable 5 -- Bounding-box detection (IoU>={det['iou_threshold']}, "
           f"gt={args.gt_source})")
     print(f"  Precision {det['precision']:.3f}   Recall {det['recall']:.3f}"
           f"   F1 {det['f1']:.3f}   mIoU(TP) {det['miou_tp']:.3f}")
     print(f"  {det['n_predicted_boxes']} predicted vs {det['n_gt_boxes']} "
           f"ground-truth boxes")
-    print(f"\nTable 6 — Localization quality (per image, n={loc['n_images']})")
+    print(f"\nTable 6 -- Localization quality (per image, n={loc['n_images']})")
     for k, v in loc.items():
         if k.endswith("_pct"):
             print(f"  {k:<22} {v:.1f}")

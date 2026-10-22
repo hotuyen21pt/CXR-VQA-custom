@@ -170,7 +170,8 @@ def main() -> None:
     ap.add_argument("--max-steps", type=int, default=-1,
                     help="cap the run; useful for a smoke test")
     ap.add_argument("--resume", default=None,
-                    help="checkpoint directory, or 'auto' for the newest one")
+                    help="checkpoint directory, 'auto' for the newest one, or "
+                         "'none' to start fresh even when checkpoints exist")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -188,7 +189,14 @@ def main() -> None:
     warn_if_nothing_will_be_saved(cfg, len(train_ds), args.max_steps)
 
     resume = args.resume
-    if resume == "auto":
+    if resume in ("none", "no", "false", ""):
+        # A caller that decided to start over -- a changed learning rate or a
+        # different set of LoRA targets makes a saved optimizer state wrong --
+        # needs a way to say so that is not "delete the checkpoints".
+        resume = None
+        print("[train] --resume none: starting fresh, existing checkpoints "
+              "are left alone")
+    elif resume == "auto":
         resume = latest_checkpoint(out_dir)
         print(f"[train] resuming from {resume}" if resume
               else "[train] no checkpoint to resume from; starting fresh")

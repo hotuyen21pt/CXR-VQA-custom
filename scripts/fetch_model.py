@@ -131,7 +131,7 @@ def main() -> None:
     if not has_chat_template(out):
         missing.append("a chat template")
     if missing:
-        print(f"\n[model] WARNING: missing {missing} — "
+        print(f"\n[model] WARNING: missing {missing} -- "
               "re-run with --all-files")
     else:
         print("\n[model] ready. Upload this folder as a Kaggle Dataset, then "

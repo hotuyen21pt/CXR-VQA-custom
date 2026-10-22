@@ -248,7 +248,7 @@ def main() -> None:
     if not args.keep_stage:
         shutil.rmtree(stage)
     print(f"\n[bundle] done: {out_zip}")
-    print("[bundle] upload it at kaggle.com/datasets → New Dataset")
+    print("[bundle] upload it at kaggle.com/datasets -> New Dataset")
 
 
 if __name__ == "__main__":

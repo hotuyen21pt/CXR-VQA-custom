@@ -84,7 +84,7 @@ class Report:
             print(f"[{mark}] {name:<{width}}  {detail}")
         print()
         if self.failed:
-            print(f"{self.failed} blocking problem(s) — fix these before "
+            print(f"{self.failed} blocking problem(s) -- fix these before "
                   "training.")
         else:
             print("Ready to train.")
