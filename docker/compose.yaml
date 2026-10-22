@@ -67,10 +67,16 @@ services:
       - --no-4bit
       # No --dtype: "auto" inspects the CPU. fp16 has no CPU kernels at all,
       # and bf16 has none either below AVX512-BF16 -- on an AVX2 machine it
-      # drops to a reference kernel measured 184x slower than fp32. So auto
-      # lands on fp32 here, which needs ~16 GB: raise Docker Desktop's memory
-      # limit to 20 GB or more (Settings -> Resources) or the container is
-      # OOM-killed mid-load.
+      # drops to a reference kernel measured 184x slower than fp32, which
+      # looks like a hang rather than a wrong dtype. So auto lands on fp32,
+      # which needs ~16 GB resident.
+      #
+      # Give the daemon 20 GB or more or the container is OOM-killed mid-load.
+      # On Windows that is NOT Docker Desktop's Settings -> Resources pane,
+      # which only displays the figure: Docker runs on WSL2, so the ceiling is
+      # %USERPROFILE%\.wslconfig ([wsl2] memory=24GB), followed by
+      # `wsl --shutdown`. With no such file WSL2 takes half the host's RAM.
+      # Check what actually applied: docker info --format '{{.MemTotal}}'
       #
       # Each token is a full forward pass on a CPU, so the reasoning tail is
       # most of the wait. 160 still leaves room for the answer, the <loc_...>

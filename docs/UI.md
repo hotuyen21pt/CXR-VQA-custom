@@ -150,16 +150,57 @@ print(json.loads(zipfile.ZipFile('outputs/medgemma-lora.zip')
 EOF
 ```
 
-**Chạy CPU thì chậm.** Một câu trả lời mất khoảng 2–5 phút, vì mỗi token là
-một lượt forward qua 4 tỉ tham số. Đủ để xem hệ thống chạy đúng, không đủ để
-chấm cả split — cái đó vẫn nên đẩy lên Kaggle. Service `serve` đã đặt sẵn
-`--dtype bfloat16` (torch gần như không có kernel fp16 cho CPU),
-`--max-new-tokens 160` để cắt bớt phần lý giải, và `--preload` để thời gian
-nạp 8 GB nằm trong log `compose up` chứ không nằm trong câu hỏi đầu tiên.
+### Chạy CPU: dtype quyết định tốc độ, và nó quyết định rất nhiều
 
-Docker Desktop cấp bao nhiêu RAM cho container là giới hạn thật:
-`docker info --format '{{.MemTotal}}'`. Model bf16 cần ~9 GB nên dưới 12 GB sẽ
-bị OOM-kill — chỉnh trong Settings → Resources.
+Trên CPU có đúng ba lựa chọn dtype, và hai trong ba là bẫy:
+
+| dtype | Vấn đề |
+| --- | --- |
+| `float16` | torch gần như không có kernel fp16 cho CPU. Chết ngay ở phép nhân ma trận đầu tiên: `addmm_impl_cpu_ not implemented for 'Half'` |
+| `bfloat16` | Chỉ có kernel oneDNN trên CPU **AVX512-BF16 hoặc AMX**. Dưới mức đó torch rơi xuống kernel tham chiếu — không vector hoá, không đa luồng |
+| `float32` | Chạy đúng và đa luồng, nhưng tốn gấp đôi bộ nhớ: **~16 GB** thay vì 8 |
+
+Đo thật trong container, matmul 1024³, 12 thread, i7-13700 (AVX2):
+
+```
+float32      4.8 ms    443.4 GFLOP/s
+bfloat16   882.8 ms      2.4 GFLOP/s     ← chậm 184 lần
+```
+
+Và trên toàn bộ một câu trả lời thật (MedGemma 1.5 4B, 160 token mới):
+
+```
+bfloat16   780 s   (13 phút, CPU 99.9% = MỘT lõi trên 24)
+float32     75 s   (nhanh hơn 10,5 lần, câu trả lời gần như y hệt)
+```
+
+Cái bẫy ở chỗ bf16 **không báo lỗi** — nó trông như treo. Nên `auto` giờ hỏi
+oneDNN có kernel bf16 cho CPU này không, không có thì chọn fp32, và in ra lựa
+chọn nó vừa làm. Muốn ép thì dùng `--dtype`.
+
+**Vì vậy Docker cần ≥ 20 GB RAM.** Kiểm tra:
+
+```bash
+docker info --format '{{.MemTotal}}'
+```
+
+Trên Windows/WSL2 con số này **không** chỉnh trong Settings → Resources của
+Docker Desktop mà nằm ở `%USERPROFILE%\.wslconfig`; không có file đó thì WSL2
+lấy mặc định 50% RAM máy:
+
+```ini
+[wsl2]
+memory=24GB
+swap=8GB
+```
+
+Rồi `wsl --shutdown` và mở lại Docker Desktop. Thiếu bộ nhớ thì container bị
+OOM-kill giữa lúc nạp, không có thông báo nào rõ ràng.
+
+Dù vậy 75 giây một câu vẫn chỉ đủ để xem hệ thống chạy đúng và soi vài mẫu —
+chấm cả 2 637 mẫu của `val` thì vẫn nên đẩy lên GPU. Service `serve` đặt sẵn
+`--max-new-tokens 160` để cắt bớt phần lý giải, và `--preload` để thời gian nạp
+16 GB nằm trong log `compose up` chứ không nằm trong câu hỏi đầu tiên.
 
 ### Trên Kaggle
 
